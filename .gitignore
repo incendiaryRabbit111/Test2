@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.spec
+.env
+app/generated/
+data/*.xls
+data/*.db
+output/
+*.xlsx 
+*.log 
+.idea/ 

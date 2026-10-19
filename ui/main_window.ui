@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>1280</width><height>800</height></rect></property>
+  <property name="windowTitle"><string>特征微生物分析工具</string></property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="mainLayout">
+    <item>
+     <layout class="QHBoxLayout" name="topLayout">
+      <item><widget class="QLabel" name="labelMode"><property name="text"><string>分析模式：</string></property></widget></item>
+      <item><widget class="QLabel" name="labelModeValue">
+        <property name="text"><string>-</string></property>
+        <property name="styleSheet"><string>color:#1a7f37;font-weight:bold;</string></property></widget></item>
+      <item><spacer name="topSpacer">
+        <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+        <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+      <item><widget class="QCheckBox" name="chkConfirm">
+        <property name="text"><string>分析前核对解析结果</string></property>
+        <property name="checked"><bool>true</bool></property></widget></item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QSplitter" name="splitter">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch><verstretch>1</verstretch></sizepolicy></property>
+      <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+      <widget class="QWidget" name="leftPane">
+       <property name="minimumSize"><size><width>210</width><height>0</height></size></property>
+       <property name="maximumSize"><size><width>280</width><height>16777215</height></size></property>
+       <layout class="QVBoxLayout" name="leftLayout">
+        <item><widget class="QPushButton" name="btnNew">
+          <property name="text"><string>＋ 新建分析</string></property></widget></item>
+        <item><widget class="QLabel" name="labelListTitle">
+          <property name="text"><string>会话记录</string></property>
+          <property name="styleSheet"><string>color:#666;</string></property></widget></item>
+        <item><widget class="QListWidget" name="sessionList"/></item>
+        <item><widget class="QLabel" name="labelCount">
+          <property name="text"><string>共 0 条</string></property>
+          <property name="styleSheet"><string>color:#888;font-size:11px;</string></property></widget></item>
+        <item><widget class="QPushButton" name="btnBatchImport">
+          <property name="text"><string>批量导入</string></property></widget></item>
+       </layout>
+      </widget>
+      <widget class="QStackedWidget" name="rightStack">
+       <widget class="QWidget" name="inputPage">
+        <layout class="QVBoxLayout" name="inputLayout">
+         <item><widget class="QLabel" name="labelInput">
+           <property name="text"><string>① 粘贴仪器输出文本（物种名 + 浓度 + 单位）</string></property></widget></item>
+         <item><widget class="QPlainTextEdit" name="inputText">
+           <property name="placeholderText"><string>内管虫: 0.346, 匣壳虫: 0.115, ... 浓度单位(10^6个/L)</string></property></widget></item>
+         <item>
+          <layout class="QHBoxLayout" name="timeLayout">
+           <item><widget class="QLabel" name="labelTime"><property name="text"><string>采样时间：</string></property></widget></item>
+           <item><widget class="QLineEdit" name="timeInput">
+             <property name="maximumSize"><size><width>240</width><height>16777215</height></size></property>
+             <property name="placeholderText"><string>例 2026-10-10 09:00（可留空）</string></property></widget></item>
+           <item><spacer name="timeSpacer">
+             <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+             <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="buttonLayout">
+           <item><widget class="QPushButton" name="btnSample"><property name="text"><string>载入示例</string></property></widget></item>
+           <item><widget class="QPushButton" name="btnSample2"><property name="text"><string>载入示例②</string></property></widget></item>
+           <item><widget class="QPushButton" name="btnAnalyze"><property name="text"><string>分析</string></property></widget></item>
+           <item><widget class="QPushButton" name="btnClear"><property name="text"><string>清空</string></property></widget></item>
+           <item><spacer name="btnSpacer">
+             <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+             <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+       <widget class="QWidget" name="resultPage">
+        <layout class="QVBoxLayout" name="resultLayout">
+         <item><widget class="QLabel" name="labelSession">
+           <property name="text"><string>（未选择记录）</string></property>
+           <property name="styleSheet"><string>color:#1f6feb;font-weight:bold;</string></property></widget></item>
+         <item>
+          <widget class="QTabWidget" name="tabResults">
+           <property name="currentIndex"><number>0</number></property>
+           <widget class="QWidget" name="tabMetrics">
+            <attribute name="title"><string>② 计算指标</string></attribute>
+            <layout class="QVBoxLayout" name="metricsLayout">
+             <item><widget class="QTableWidget" name="tblMetrics"/></item></layout>
+           </widget>
+           <widget class="QWidget" name="tabEvaluations">
+            <attribute name="title"><string>③ 物种评价</string></attribute>
+            <layout class="QVBoxLayout" name="evaluationsLayout">
+             <item><widget class="QTableWidget" name="tblEvaluations"/></item></layout>
+           </widget>
+           <widget class="QWidget" name="tabReport">
+            <attribute name="title"><string>④ AI 分析报告</string></attribute>
+            <layout class="QVBoxLayout" name="reportLayout">
+             <item><widget class="QPlainTextEdit" name="txtReport">
+               <property name="readOnly"><bool>true</bool></property></widget></item></layout>
+           </widget>
+           <widget class="QWidget" name="tabTrend">
+            <attribute name="title"><string>⑤ 趋势对比</string></attribute>
+            <layout class="QVBoxLayout" name="trendLayout">
+             <item><widget class="QWidget" name="trendHolder" native="true"/></item></layout>
+           </widget>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </widget>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="bottomLayout">
+      <item><widget class="QLabel" name="labelSummary"><property name="text"><string>就绪</string></property></widget></item>
+      <item><spacer name="bottomSpacer">
+        <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+        <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+      <item><widget class="QPushButton" name="btnExport">
+        <property name="enabled"><bool>false</bool></property>
+        <property name="text"><string>导出当前记录</string></property></widget></item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar"/>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

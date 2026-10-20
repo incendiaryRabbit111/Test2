@@ -8,7 +8,10 @@
    <layout class="QVBoxLayout" name="mainLayout">
     <item>
      <layout class="QHBoxLayout" name="topLayout">
-      <item><widget class="QLabel" name="labelMode"><property name="text"><string>分析模式：</string></property></widget></item>
+      <item><widget class="QLabel" name="labelMode"><property name="text"><string>使用模型：</string></property></widget></item>
+      <item><widget class="QComboBox" name="comboProvider">
+        <property name="minimumSize"><size><width>250</width><height>0</height></size></property></widget></item>
+      <item><widget class="QPushButton" name="btnApiSettings"><property name="text"><string>API 设置</string></property></widget></item>
       <item><widget class="QLabel" name="labelModeValue">
         <property name="text"><string>-</string></property>
         <property name="styleSheet"><string>color:#1a7f37;font-weight:bold;</string></property></widget></item>

@@ -109,33 +109,36 @@ class AnalysisResult:
         return {e.species: e for e in self.evaluations}
 
 
-def _load_env() -> None:
-    env_file = ROOT / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip())
-
-
 class DeepSeekAnalyzer:
-    def __init__(self) -> None:
-        _load_env()
-        self.api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-        self.model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat").strip()
-        self.base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
-        self.timeout = 180
+    """通用「OpenAI 兼容」客户端（类名沿用，兼容旧调用）。
+
+    DeepSeek / 通义 / Kimi / 智谱 / Ollama / LM Studio / vLLM 都是这套协议，
+    差别只在 base_url + model + key。
+    """
+
+    def __init__(self, config=None, model: str | None = None) -> None:
+        if config is None:
+            from app.api_config import ApiConfig
+            config = ApiConfig.from_env()
+        self.config = config
+        self.api_key = (config.api_key if config else "").strip()
+        # model 可以为单次调用覆盖（同一个网关切不同模型）
+        self.model = (model or (config.model if config else "")).strip()
+        self.base_url = (config.base_url if config else "").strip()
+        self.timeout = config.timeout if config else 180
+        self.temperature = config.temperature if config else TEMPERATURE
 
     @property
     def is_live(self) -> bool:
-        return bool(self.api_key) and self.api_key.startswith("sk-")
+        # 本地模型（Ollama）允许任意 key，所以不再校验 sk- 前缀
+        return bool(self.api_key and self.base_url and self.model)
 
     @property
     def mode_text(self) -> str:
-        return f"DeepSeek（{self.model}）" if self.is_live else "本地模拟"
+        if not self.is_live:
+            return "本地模拟（未配置 API）"
+        name = (self.config.name if self.config else "") or "API"
+        return f"{name}（{self.model}）"
 
     # ---------------- 底层调用 ----------------
     def _chat(self, user_prompt: str, json_mode: bool = False, max_tokens: int = 8000) -> tuple[str, str]:
@@ -146,23 +149,40 @@ class DeepSeekAnalyzer:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": TEMPERATURE,
+            "temperature": self.temperature,
             "max_tokens": max_tokens,
         }
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         try:
-            resp = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json=body,
-                timeout=self.timeout,
-            )
+            resp = self._post(body)
+            # 有些模型不支持 json_object，去掉该参数再试一次
+            if json_mode and resp.status_code != 200:
+                body.pop("response_format", None)
+                resp = self._post(body)
             if resp.status_code != 200:
                 return "", f"API 返回 {resp.status_code}：{resp.text[:200]}"
             return resp.json()["choices"][0]["message"]["content"].strip(), ""
         except Exception as exc:
             return "", f"{type(exc).__name__}：{exc}"
+
+    def _post(self, body: dict):
+        return requests.post(
+            f"{self.base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {self.api_key}",
+                     "Content-Type": "application/json"},
+            json=body,
+            timeout=self.timeout,
+        )
+
+    def test_connection(self) -> tuple[bool, str]:
+        """给配置界面用的连通性测试。"""
+        if not self.is_live:
+            return False, "配置不完整：base_url / 模型名 / API Key 都要填"
+        text, err = self._chat("只回复两个字：收到", json_mode=False, max_tokens=16)
+        if err:
+            return False, err
+        return True, f"连接成功，模型回复「{text[:30]}」"
 
     @staticmethod
     def _parse_json(content: str) -> dict | None:

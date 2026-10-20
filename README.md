@@ -21,7 +21,20 @@ cd D:\dev\microbe-analyzer
 | 虚拟环境 | `D:\dev\microbe-analyzer\.venv` |
 | pip 缓存 | `D:\pip-cache`（已从 C 盘迁走） |
 
-## API Key
+## API 管理（推荐用界面）
+
+程序内点顶栏 **「API 设置」** 就能增删改 AI 接口，不用碰配置文件。
+
+- 只支持 **OpenAI 兼容**协议——DeepSeek / 通义 / Kimi / 智谱 / Ollama / LM Studio / vLLM 都是这套
+- 每条配置可设：名称 / Base URL / 模型名 / API Key / temperature / 超时
+- 支持 **测试连接**、**设为默认**
+- API Key 用 **Windows DPAPI 加密**后存 `data/api_configs.db`，换台电脑解不开
+- 顶栏下拉框可随时切换用哪个模型
+
+**首次启动**会自动把 `.env` 里的 key 导入成一条名为 `DeepSeek` 的配置。
+配置库里一条都没有时，仍会回退读 `.env`（老环境不会坏）。
+
+### 兼容：`.env`（旧方式）
 
 配置在 `.env`（不要提交到 git）：
 

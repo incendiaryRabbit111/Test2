@@ -25,6 +25,11 @@ OUT = ROOT / "output" / "preview.png"
 PREVIEW_DB = ROOT / "output" / "preview_history.db"
 history_mod.DB_PATH = PREVIEW_DB
 
+# API 配置也用独立库，顺便塞一条「一个网关挂两个模型」的配置
+from app import api_config as api_config_mod
+
+api_config_mod.DB_PATH = ROOT / "output" / "preview_api.db"
+
 HOURS = 24
 BASE_TIME = datetime(2026, 10, 9, 9, 0, 0)
 
@@ -67,6 +72,23 @@ def species_at(hour: int) -> dict:
     return out
 
 
+def seed_api() -> None:
+    store = api_config_mod.ApiConfigStore()
+    store.clear_all() if hasattr(store, "clear_all") else None
+    with store._conn() as conn:
+        conn.execute("DELETE FROM api_configs")
+    env = api_config_mod.ApiConfig.from_env()
+    if env is None:
+        return
+    cfg = api_config_mod.ApiConfig(
+        name="DeepSeek", base_url=env.base_url,
+        models=["deepseek-flash", "deepseek-v4-pro"],
+        api_key=env.api_key, is_default=True,
+    )
+    store.save(cfg)
+    print(f"seeded api config: {cfg.name} / {cfg.models}")
+
+
 def seed_history() -> None:
     h = history_mod.History()
     h.clear()
@@ -98,6 +120,7 @@ def shot(win, name: str) -> None:
 
 
 def main() -> int:
+    seed_api()
     seed_history()
     app = QApplication(sys.argv)
     win = MainWindow()
@@ -163,6 +186,20 @@ def main() -> int:
     dlg.hide()
     dlg.deleteLater()
     pump(app, 8)
+    # API 设置对话框
+    from app.api_config import ApiConfigStore
+    from app.api_dialog import ApiSettingsDialog
+    ad = ApiSettingsDialog(ApiConfigStore())
+    ad.resize(820, 560)
+    ad.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    ad.show()
+    pump(app, 20)
+    ad.grab().save(str(OUT.with_name("preview_08_API设置.png")))
+    print("saved", OUT.with_name("preview_08_API设置.png"))
+    ad.hide()
+    ad.deleteLater()
+    pump(app, 8)
+
     return 0
 
 

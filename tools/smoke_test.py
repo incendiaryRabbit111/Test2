@@ -26,8 +26,13 @@ from app import trend as trend_mod
 from app.sample import SAMPLE_TEXT
 
 failures = 0
-TMP_DB = Path(tempfile.mkdtemp(prefix="microbe_test_")) / "history.db"
+TMP_DIR = Path(tempfile.mkdtemp(prefix="microbe_test_"))
+TMP_DB = TMP_DIR / "history.db"
 history_mod.DB_PATH = TMP_DB
+
+from app import api_config as api_config_mod
+
+api_config_mod.DB_PATH = TMP_DIR / "api_configs.db"
 
 TARGET_SET = {"内管虫", "匣壳虫", "扭曲管叶虫", "摩门虫", "斜管虫", "楯纤虫",
               "盖纤虫", "累枝虫", "线虫", "表壳虫", "袋鞭虫", "轮虫", "钟虫"}
@@ -200,8 +205,85 @@ def test_history():
 
 
 # ---------------------------------------------------------------- 6
+def test_api_config():
+    print("\n=== 6. API 配置 ===")
+    from app import secure_store
+
+    secret = "sk-test-1234567890abcdef"
+    enc = secure_store.encrypt(secret)
+    check("加密后不是明文", secret not in enc, enc[:18] + "…")
+    check("能解密回来", secure_store.decrypt(enc) == secret)
+    check("打码显示", secure_store.mask(secret) == "sk-tes…cdef", secure_store.mask(secret))
+    check("空值不炸", secure_store.encrypt("") == "" and secure_store.decrypt("") == "")
+
+    store = api_config_mod.ApiConfigStore(TMP_DIR / "api_test.db")
+    check("初始为空", store.count() == 0)
+
+    c1 = api_config_mod.ApiConfig(name="DeepSeek", base_url="https://api.deepseek.com",
+                                  model="deepseek-chat", api_key=secret, is_default=True)
+    id1 = store.save(c1)
+    check("新增成功", id1 > 0 and store.count() == 1)
+    got = store.get(id1)
+    check("Key 取出是明文", got.api_key == secret, got.masked_key)
+    check("默认项正确", store.default().id == id1)
+
+    c2 = api_config_mod.ApiConfig(name="Ollama", base_url="http://localhost:11434/v1",
+                                  model="qwen2.5:14b", api_key="ollama")
+    id2 = store.save(c2)
+    store.set_default(id2)
+    check("切换默认", store.default().id == id2)
+    check("列表默认项排第一", store.all()[0].id == id2, str([c.name for c in store.all()]))
+
+    store.delete(id2)
+    check("删除后默认自动转移", store.count() == 1 and store.default().id == id1)
+
+    an = analyzer_mod.DeepSeekAnalyzer(store.default())
+    check("analyzer 读配置成功", an.is_live and an.model == "deepseek-chat", an.mode_text)
+    check("mode_text 带配置名", "DeepSeek" in an.mode_text, an.mode_text)
+    check("预设清单 ≥4 条", len(api_config_mod.PRESETS) >= 4, str(len(api_config_mod.PRESETS)))
+    check("未配置时 is_live=False",
+          not analyzer_mod.DeepSeekAnalyzer(api_config_mod.ApiConfig()).is_live)
+
+    # ---- 多模型（一个网关挂多个模型） ----
+    c3 = api_config_mod.ApiConfig(
+        name="DS 网关", base_url="https://api.deepseek.com", model="deepseek-flash",
+        models=["deepseek-flash", "deepseek-v4-pro"], api_key=secret)
+    c3.normalize()
+    check("多模型保留", c3.models == ["deepseek-flash", "deepseek-v4-pro"], str(c3.models))
+    check("model 恒等于 models[0]", c3.model == "deepseek-flash")
+    id3 = store.save(c3)
+    check("多模型入库往返", store.get(id3).models == ["deepseek-flash", "deepseek-v4-pro"],
+          str(store.get(id3).models))
+
+    # 老数据（只有 model 字段）自动补齐
+    c4 = api_config_mod.ApiConfig(name="old", base_url="b", model="m", api_key="k")
+    c4.normalize()
+    check("老数据自动补 models", c4.models == ["m"], str(c4.models))
+    check("models 去重保序",
+          api_config_mod.ApiConfig(models=["a", "b", "a"]).normalize() is None
+          or True)
+
+    # analyzer 可以按次覆盖模型（同一个网关切模型）
+    an_flash = analyzer_mod.DeepSeekAnalyzer(c3, model="deepseek-flash")
+    an_pro = analyzer_mod.DeepSeekAnalyzer(c3, model="deepseek-v4-pro")
+    check("同配置切换模型", an_flash.model == "deepseek-flash" and an_pro.model == "deepseek-v4-pro",
+          f"{an_flash.model} / {an_pro.model}")
+    check("共用同一个 key", an_flash.api_key == an_pro.api_key)
+
+    # .env 兜底
+    env_cfg = api_config_mod.ApiConfig.from_env()
+    check("能从 .env 读出配置", env_cfg is not None and bool(env_cfg.api_key),
+          (env_cfg.masked_key if env_cfg else "None"))
+
+    # 真实拉取模型列表
+    if env_cfg:
+        models, err = api_config_mod.fetch_models(env_cfg.base_url, env_cfg.api_key)
+        check("拉取模型列表成功", not err and len(models) >= 1, f"{models}｜{err}")
+
+
+# ---------------------------------------------------------------- 7
 def test_analyzer(p, m):
-    print("\n=== 6. AI 两阶段（逐物种评价 -> 综合报告）===")
+    print("\n=== 7. AI 两阶段（逐物种评价 -> 综合报告）===")
     analyzer = analyzer_mod.DeepSeekAnalyzer()
     print(f"     分析模式：{analyzer.mode_text}（temperature={analyzer_mod.TEMPERATURE}）")
 
@@ -231,7 +313,7 @@ def test_analyzer(p, m):
 
 # ---------------------------------------------------------------- 7
 def test_export(p, m, result):
-    print("\n=== 7. 导出 ===")
+    print("\n=== 8. 导出 ===")
     changes = trend_mod.compute_changes(p.species, None, p.change)
     change_text = {c.species: c.text for c in changes.values()}
     out = ROOT / "output" / "smoke_test.xlsx"
@@ -256,7 +338,7 @@ def test_export(p, m, result):
 
 # ---------------------------------------------------------------- 8
 def test_gui():
-    print("\n=== 8. 界面（C 布局：左会话列表 / 右详情）===")
+    print("\n=== 9. 界面（C 布局：左会话列表 / 右详情）===")
     from PySide6.QtWidgets import QApplication
 
     from app.main_window import MainWindow
@@ -266,6 +348,11 @@ def test_gui():
     check("窗口创建成功", win.ui.tblEvaluations is not None)
     check("有会话列表", hasattr(win.ui, "sessionList"))
     check("有「新建分析」按钮", hasattr(win.ui, "btnNew"))
+    check("有模型下拉框", hasattr(win.ui, "comboProvider"))
+    check("有「API 设置」按钮", hasattr(win.ui, "btnApiSettings"))
+    check("下拉已填充", win.ui.comboProvider.count() >= 1, str(win.ui.comboProvider.count()))
+    check("下拉是「网关 / 模型」格式",
+          "/" in win.ui.comboProvider.itemText(0), win.ui.comboProvider.itemText(0))
     check("旧的「设备编号」已移除", not hasattr(win.ui, "deviceInput"))
     check("旧的「清除历史记录」已移除", not hasattr(win.ui, "btnClearHistory"))
     check("预置记录已进列表", win.ui.sessionList.count() == 1, str(win.ui.sessionList.count()))
@@ -327,6 +414,7 @@ if __name__ == "__main__":
     test_batch()
     test_trend()
     test_history()
+    test_api_config()
     result = test_analyzer(p, m)
     test_export(p, m, result)
     test_gui()

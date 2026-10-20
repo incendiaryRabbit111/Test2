@@ -29,11 +29,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app import analyzer as analyzer_mod
+from app import api_config as api_config_mod
 from app import exporter as exporter_mod
 from app import history as history_mod
 from app import metrics as metrics_mod
 from app import parser as parser_mod
 from app import trend as trend_mod
+from app.api_dialog import ApiSettingsDialog
 from app.batch_dialog import BatchDialog
 from app.confirm_dialog import ConfirmDialog
 from app.generated.ui_main_window import Ui_MainWindow
@@ -67,8 +69,10 @@ class MainWindow(QMainWindow):
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
 
-        self.analyzer = analyzer_mod.DeepSeekAnalyzer()
         self.history = history_mod.History()
+        self.api_store = api_config_mod.ApiConfigStore()
+        self.api_store.seed_from_env()        # 首次运行把 .env 里的 key 导进配置库
+        self.analyzer = analyzer_mod.DeepSeekAnalyzer(self.api_store.default())
         self._pending = None            # 分析中的上下文
         self._change_map: dict = {}
         self._trends: list = []
@@ -84,9 +88,7 @@ class MainWindow(QMainWindow):
         self.ui.leftLayout.setStretchFactor(self.ui.sessionList, 1)
         self.ui.inputText.setMinimumHeight(300)
 
-        self.ui.labelModeValue.setText(self.analyzer.mode_text)
-        if not self.analyzer.is_live:
-            self.ui.labelModeValue.setStyleSheet("color:#b26a00;font-weight:bold;")
+        self._reload_providers()
         self.ui.inputText.setPlainText(SAMPLE_TEXT)
 
         self._refresh_trend()
@@ -133,9 +135,58 @@ class MainWindow(QMainWindow):
         self.ui.btnNew.clicked.connect(lambda: self._show_input_page("粘贴数据后点「分析」"))
         self.ui.btnExport.clicked.connect(self.on_export)
         self.ui.btnBatchImport.clicked.connect(self.on_batch_import)
+        self.ui.btnApiSettings.clicked.connect(self.on_api_settings)
+        self.ui.comboProvider.currentIndexChanged.connect(self._apply_provider)
         self.ui.sessionList.currentRowChanged.connect(self._on_row_changed)
         self.ui.sessionList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.ui.sessionList.customContextMenuRequested.connect(self._on_session_menu)
+
+    # ---------------- 模型切换 ----------------
+    def _reload_providers(self) -> None:
+        combo = self.ui.comboProvider
+        combo.blockSignals(True)
+        combo.clear()
+        configs = self.api_store.all()
+        if configs:
+            default = self.api_store.default()
+            target = -1
+            for cfg in configs:
+                models = cfg.models or ([cfg.model] if cfg.model else [])
+                for m in models:
+                    star = bool(default and cfg.id == default.id and m == cfg.model)
+                    combo.addItem(("★ " if star else "    ") + f"{cfg.name} / {m}",
+                                  (cfg.id, m))
+                    if star and target < 0:
+                        target = combo.count() - 1
+            combo.setCurrentIndex(max(target, 0))
+        else:
+            env = api_config_mod.ApiConfig.from_env()
+            if env:
+                combo.addItem(f"（来自 .env）{env.model}", None)
+            else:
+                combo.addItem("（未配置，使用本地模拟）", None)
+        combo.blockSignals(False)
+        self._apply_provider()
+
+    def _apply_provider(self, *_) -> None:
+        data = self.ui.comboProvider.currentData()
+        cfg, model = None, None
+        if isinstance(data, tuple) and len(data) == 2:
+            cid, model = data
+            cfg = self.api_store.get(cid)
+        if cfg is None:
+            cfg = self.api_store.default()
+            model = None
+        self.analyzer = analyzer_mod.DeepSeekAnalyzer(cfg, model=model)
+        live = self.analyzer.is_live
+        self.ui.labelModeValue.setText("● 在线" if live else "○ 未配置（本地模拟）")
+        self.ui.labelModeValue.setStyleSheet(
+            f"color:{'#1a7f37' if live else '#b26a00'};font-weight:bold;")
+
+    def on_api_settings(self) -> None:
+        dlg = ApiSettingsDialog(self.api_store, self)
+        dlg.exec()
+        self._reload_providers()
 
     # ---------------- 页面切换 ----------------
     def _show_input_page(self, tip: str = "") -> None:

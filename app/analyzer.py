@@ -19,6 +19,8 @@ from pathlib import Path
 
 import requests
 
+from app.rag import KnowledgeBase, build_query, format_context, mark_cited
+
 ROOT = Path(__file__).resolve().parent.parent
 TEMPERATURE = 0.2          # 结论稳定性优先；想更灵活可调到 0.4
 
@@ -34,6 +36,9 @@ STAGE1_TEMPLATE = """【本次检测数据】
 
 各物种浓度与相对丰度（按浓度降序，共 {species_count} 种）：
 {species_table}
+
+【参考资料（来自专业书籍与文献，可能相关）】
+{reference_block}
 
 【任务】为上面**每一个**物种写一条评价，两部分都要短：
 
@@ -55,7 +60,9 @@ STAGE1_TEMPLATE = """【本次检测数据】
 2. 依据该物种真实的指示意义作答，把握不大就用"常见于…""通常与…相关"这类保守表述，不要编造；
 3. 如果某物种的「较上次变化」幅度显著（绝对值 ≥ 30%），或是本次新检出 / 本次消失，
    要在评价里点出这个变化及其含义；没有变化数据时不必强行提及；
-4. 只输出 JSON，不要用 markdown 代码块包裹，不要有任何其它文字。"""
+4. 如果使用了参考资料中的具体结论，在 comment 末尾用 [R1] 这样的编号标注来源；
+   没有使用就不要标注。只能引用上面列出的编号，不要编造资料中没有的内容；
+5. 只输出 JSON，不要用 markdown 代码块包裹，不要有任何其它文字。"""
 
 # ---------------- 阶段二：综合报告 ----------------
 STAGE2_TEMPLATE = """【本次检测概要】
@@ -73,6 +80,9 @@ STAGE2_TEMPLATE = """【本次检测概要】
 【上一步生成的逐物种评价】
 {evaluations}
 
+【参考资料（来自专业书籍与文献，可能相关）】
+{reference_block}
+
 【任务】
 把这些零散的单物种评价，综合成一份整体判断。
 
@@ -88,7 +98,8 @@ STAGE2_TEMPLATE = """【本次检测概要】
 建议：<一条建议，20~40 字>
 建议：<一条建议，20~40 字>
 
-（建议 2~4 条，每条单独一行。只依据上面给出的信息，不要编造任何数值）"""
+（建议 2~4 条，每条单独一行。只依据上面给出的信息，不要编造任何数值。
+  如果某条判断引用了参考资料，在句末标注 [R1] 这样的编号；没有引用就不要标注。）"""
 
 
 @dataclass
@@ -104,6 +115,7 @@ class AnalysisResult:
     evaluations: list[SpeciesEval] = field(default_factory=list)
     source: str = "本地模拟"
     error: str = ""
+    references: list[dict] = field(default_factory=list)
 
     def eval_map(self) -> dict[str, SpeciesEval]:
         return {e.species: e for e in self.evaluations}
@@ -127,6 +139,7 @@ class DeepSeekAnalyzer:
         self.base_url = (config.base_url if config else "").strip()
         self.timeout = config.timeout if config else 180
         self.temperature = config.temperature if config else TEMPERATURE
+        self.kb = KnowledgeBase()
 
     @property
     def is_live(self) -> bool:
@@ -213,7 +226,7 @@ class DeepSeekAnalyzer:
         return "\n".join(lines) or "  （无）"
 
     @classmethod
-    def build_stage1_prompt(cls, payload: dict) -> str:
+    def build_stage1_prompt(cls, payload: dict, reference_block: str = "（无）") -> str:
         return STAGE1_TEMPLATE.format(
             unit=payload["unit"] or "未提供",
             species_count=payload["species_count"],
@@ -222,6 +235,7 @@ class DeepSeekAnalyzer:
             dominant="、".join(payload["dominant"]) or "（无）",
             absolute="、".join(payload["absolute"]) or "（无）",
             species_table=cls._species_table(payload),
+            reference_block=reference_block or "（无）",
         )
 
     @staticmethod
@@ -245,7 +259,11 @@ class DeepSeekAnalyzer:
         return "\n".join(f"  · {h['rule']}：{h['detail']} → {h['meaning']}" for h in hits)
 
     @staticmethod
-    def build_stage2_prompt(payload: dict, evaluations: list[SpeciesEval]) -> str:
+    def build_stage2_prompt(
+        payload: dict,
+        evaluations: list[SpeciesEval],
+        reference_block: str = "（无）",
+    ) -> str:
         pct = {r["name"]: r["percent"] for r in payload["rows"]}
         flag = {r["name"]: ("，绝对优势" if r["absolute"] else ("，优势" if r["dominant"] else "")) for r in payload["rows"]}
         text = "\n".join(
@@ -263,20 +281,30 @@ class DeepSeekAnalyzer:
             dominant="、".join(payload["dominant"]) or "（无）",
             absolute="、".join(payload["absolute"]) or "（无）",
             evaluations=text,
+            reference_block=reference_block or "（无）",
         )
 
     # ---------------- 主流程 ----------------
     def analyze(self, payload: dict) -> AnalysisResult:
+        refs = []
+        reference_block = "（无）"
+        if self.kb.available:
+            refs = self.kb.search(build_query(payload), top_k=6)
+            if refs:
+                reference_block = format_context(refs)
+
         if not self.is_live:
-            return self._mock(payload, "未配置 DEEPSEEK_API_KEY")
+            return self._mock(payload, "未配置 DEEPSEEK_API_KEY", refs)
 
         # —— 阶段一 ——
-        content, err = self._chat(self.build_stage1_prompt(payload), json_mode=True)
+        content, err = self._chat(
+            self.build_stage1_prompt(payload, reference_block), json_mode=True
+        )
         if not content:
-            return self._mock(payload, err)
+            return self._mock(payload, err, refs)
         data = self._parse_json(content)
         if data is None:
-            return self._mock(payload, "阶段一返回的不是合法 JSON")
+            return self._mock(payload, "阶段一返回的不是合法 JSON", refs)
 
         evals = [
             SpeciesEval(
@@ -288,17 +316,27 @@ class DeepSeekAnalyzer:
             if it.get("species")
         ]
         if not evals:
-            return self._mock(payload, "阶段一没有返回任何物种评价")
+            return self._mock(payload, "阶段一没有返回任何物种评价", refs)
 
         # —— 阶段二（必须看到阶段一的产出）——
         report, err2 = self._chat(
-            self.build_stage2_prompt(payload, evals), json_mode=False, max_tokens=1500
+            self.build_stage2_prompt(payload, evals, reference_block),
+            json_mode=False,
+            max_tokens=1500,
         )
         if not report:
             report = self._fallback_report(payload, evals)
             err2 = err2 or "阶段二调用失败，已用本地模板兜底"
 
-        return AnalysisResult(report=report, evaluations=evals, source="DeepSeek", error=err or err2)
+        if refs:
+            mark_cited(refs, content, report)
+        return AnalysisResult(
+            report=report,
+            evaluations=evals,
+            source="DeepSeek",
+            error=err or err2,
+            references=[r.to_dict() for r in refs],
+        )
 
     # ---------------- 兜底 ----------------
     @staticmethod
@@ -314,8 +352,8 @@ class DeepSeekAnalyzer:
         lines.append("（阶段二综合失败，以上建议由逐物种结果直接汇总，未经融合提炼。）")
         return "\n".join(lines)
 
-    @staticmethod
-    def _mock(payload: dict, reason: str = "") -> AnalysisResult:
+    def _mock(self, payload: dict, reason: str = "", refs=None) -> AnalysisResult:
+        refs = refs or []
         rows = payload["rows"]
         evals = []
         for r in rows:
@@ -331,7 +369,13 @@ class DeepSeekAnalyzer:
             + (f"第一优势种为 {rows[0]['name']}，相对丰度 {rows[0]['percent']:.1f}%。" if rows else "")
             + "（本地模拟结果，未接入大模型。）"
         ]
-        return AnalysisResult(report="\n".join(lines), evaluations=evals, source="本地模拟", error=reason)
+        return AnalysisResult(
+            report="\n".join(lines),
+            evaluations=evals,
+            source="本地模拟",
+            error=reason,
+            references=[r.to_dict() for r in refs],
+        )
 
 
 def build_payload(parsed, metrics, changes: dict | None = None,

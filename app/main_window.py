@@ -298,8 +298,11 @@ class MainWindow(QMainWindow):
             self.ui.tblMetrics.setRowCount(0)
             self.ui.tblEvaluations.setRowCount(0)
 
-        self._show_report(rec.report or "（这条记录还没有生成 AI 报告。"
-                                         "可以右键「载入到输入框」后重新分析。）")
+        self._show_report(
+            rec.report or "（这条记录还没有生成 AI 报告。"
+                          "可以右键「载入到输入框」后重新分析。）",
+            rec.references or [],
+        )
         self._show_result_page()
         self.ui.btnExport.setEnabled(bool(rec.species))
 
@@ -362,10 +365,24 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
 
-    def _show_report(self, text: str) -> None:
-        """把「情况/变化/建议」各段拆开、段间留白，避免糊成一片。"""
+    def _show_report(self, text: str, references: list | None = None) -> None:
+        """把「情况/变化/建议」各段拆开，并在末尾附上参考来源。"""
         lines = [x.strip() for x in (text or "").splitlines() if x.strip()]
-        self.ui.txtReport.setPlainText("\n\n".join(lines))
+        body = "\n\n".join(lines)
+        if references:
+            ref_lines = ["────────  参考来源  ────────"]
+            for ref in references:
+                start, end = ref.get("page_start"), ref.get("page_end")
+                pages = f"第{start}页" if start == end else f"第{start}-{end}页"
+                flag = " ✔已引用" if ref.get("cited") else ""
+                ref_lines.append(
+                    f"[{ref.get('label', '')}] 《{ref.get('book', '')}》{pages}{flag}"
+                )
+                snippet = (ref.get("text") or "").strip().replace("\n", " ")
+                if snippet:
+                    ref_lines.append("    " + snippet[:160])
+            body = body + "\n\n\n" + "\n".join(ref_lines)
+        self.ui.txtReport.setPlainText(body)
 
     # ---------------- 分析流程 ----------------
     def on_analyze(self) -> None:
@@ -438,6 +455,7 @@ class MainWindow(QMainWindow):
                          for e in analysis.evaluations],
             changes=changes_list, trends=trends_list,
             analysis_source=analysis.source,
+            references=analysis.references,
         ))
 
         self._refresh_trend()
@@ -500,6 +518,7 @@ class MainWindow(QMainWindow):
                                                   advice=e.get("advice", ""))
                          for e in (rec.evaluations or [])],
             source=rec.analysis_source or "（未分析）",
+            references=rec.references or [],
         )
         change_text = {d.get("species"): (d.get("text") or "—") for d in (rec.changes or [])}
         trends = [trend_mod.TrendHit(rule=t.get("rule", ""), detail=t.get("detail", ""),

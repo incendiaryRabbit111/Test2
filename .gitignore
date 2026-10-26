@@ -12,3 +12,8 @@ output/
 *.xlsx 
 *.log 
 .idea/ 
+
+# 本地知识库（受版权保护的原文与索引，不入库）
+knowledge/books/
+knowledge/raw/
+knowledge/index/

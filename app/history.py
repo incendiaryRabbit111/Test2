@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS samples (
     evaluations_json TEXT,
     changes_json     TEXT,
     trends_json      TEXT,
-    analysis_source  TEXT
+    analysis_source  TEXT,
+    references_json  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_id ON samples(id DESC);
 """
@@ -45,11 +46,12 @@ _EXTRA_COLUMNS = {
     "changes_json": "TEXT",
     "trends_json": "TEXT",
     "analysis_source": "TEXT",
+    "references_json": "TEXT",
 }
 
 _COLS = ("id, device, sample_time, imported_at, unit, total, species_count, shannon_h, "
          "species_json, report, raw_text, evaluations_json, changes_json, trends_json, "
-         "analysis_source")
+         "analysis_source, references_json")
 
 DUMMY_DEVICE = ""          # 已废弃，保留列以兼容老库
 
@@ -70,6 +72,7 @@ class Record:
     changes: list = field(default_factory=list)         # [{species, pct, source, text}]
     trends: list = field(default_factory=list)          # [{rule, detail, meaning}]
     analysis_source: str = ""
+    references: list = field(default_factory=list)      # [{label, book, pages, text, cited}]
 
     @property
     def title(self) -> str:
@@ -118,8 +121,9 @@ class History:
             cur = conn.execute(
                 "INSERT INTO samples(device, sample_time, imported_at, unit, total,"
                 " species_count, shannon_h, species_json, report, raw_text,"
-                " evaluations_json, changes_json, trends_json, analysis_source)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " evaluations_json, changes_json, trends_json, analysis_source,"
+                " references_json)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     DUMMY_DEVICE,
                     rec.sample_time,
@@ -131,6 +135,7 @@ class History:
                     json.dumps(rec.changes, ensure_ascii=False),
                     json.dumps(rec.trends, ensure_ascii=False),
                     rec.analysis_source,
+                    json.dumps(rec.references, ensure_ascii=False),
                 ),
             )
             return int(cur.lastrowid or 0)
@@ -141,14 +146,15 @@ class History:
             conn.execute(
                 "UPDATE samples SET report=?, raw_text=?, evaluations_json=?,"
                 " changes_json=?, trends_json=?, analysis_source=?, sample_time=?,"
-                " total=?, species_count=?, shannon_h=? WHERE id=?",
+                " total=?, species_count=?, shannon_h=?, references_json=? WHERE id=?",
                 (
                     rec.report, rec.raw_text,
                     json.dumps(rec.evaluations, ensure_ascii=False),
                     json.dumps(rec.changes, ensure_ascii=False),
                     json.dumps(rec.trends, ensure_ascii=False),
                     rec.analysis_source, rec.sample_time,
-                    rec.total, rec.species_count, rec.shannon_h, rec_id,
+                    rec.total, rec.species_count, rec.shannon_h,
+                    json.dumps(rec.references, ensure_ascii=False), rec_id,
                 ),
             )
 
@@ -212,4 +218,5 @@ class History:
             changes=cls._loads(row[12], []),
             trends=cls._loads(row[13], []),
             analysis_source=row[14] or "",
+            references=cls._loads(row[15], []),
         )

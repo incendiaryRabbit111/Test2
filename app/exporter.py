@@ -5,10 +5,12 @@
   1. 物种评价   —— 序号 | 物种 | 浓度 | 相对丰度 | 等级 | 较上次变化 | 综合评价 | 指导意见
   2. 检测概要   —— 一行一次检测的总体信息（时间/设备/物种数/H'/优势种群/趋势命中…）
   3. AI 分析报告 —— 情况 / 变化 / 建议
+  4. 参考来源   —— RAG 检索到的书籍段落与页码
 """
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +24,13 @@ WRAP = Alignment(wrap_text=True, vertical="top")
 CENTER = Alignment(horizontal="center", vertical="center")
 ROW_ABS = PatternFill("solid", fgColor="FDE2E2")     # 绝对优势
 ROW_DOM = PatternFill("solid", fgColor="EAF6EA")     # 优势
+_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _safe(value):
+    if isinstance(value, str):
+        return _ILLEGAL.sub("", value)
+    return value
 
 
 def _write_header(ws, headers: list[str]) -> None:
@@ -60,9 +69,9 @@ def export(path, sample_time: str = "", parsed=None, metrics=None, analysis=None
         ev = eval_map.get(r.name)
         level = "绝对优势" if r.is_absolute else ("优势" if r.is_dominant else "常见")
         ws.append([
-            i, r.name, round(r.concentration, 4), round(r.percent, 2), level,
-            changes.get(r.name, "—"),
-            ev.comment if ev else "", ev.advice if ev else "",
+            i, _safe(r.name), round(r.concentration, 4), round(r.percent, 2), level,
+            _safe(changes.get(r.name, "—")),
+            _safe(ev.comment) if ev else "", _safe(ev.advice) if ev else "",
         ])
         if r.is_absolute:
             fill = ROW_ABS
@@ -88,11 +97,12 @@ def export(path, sample_time: str = "", parsed=None, metrics=None, analysis=None
                         "物种种类数", "多样性指数H'", "均匀度", "优势种群", "绝对优势种群",
                         "对比基准时间", "命中趋势规则"])
     ws2.append([
-        device or "", sample_time or "", datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        parsed.unit or "", round(metrics.total, 4), s, metrics.shannon_h, evenness,
-        "、".join(metrics.dominant), "、".join(metrics.absolute),
-        previous_time or "（无）",
-        "；".join(f"{t.rule}（{t.detail}）" for t in trends) or "（无）",
+        _safe(device or ""), _safe(sample_time or ""),
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        _safe(parsed.unit or ""), round(metrics.total, 4), s, metrics.shannon_h, evenness,
+        _safe("、".join(metrics.dominant)), _safe("、".join(metrics.absolute)),
+        _safe(previous_time or "（无）"),
+        _safe("；".join(f"{t.rule}（{t.detail}）" for t in trends) or "（无）"),
     ])
     for cell in ws2[2]:
         cell.alignment = WRAP
@@ -101,13 +111,30 @@ def export(path, sample_time: str = "", parsed=None, metrics=None, analysis=None
     # ---- Sheet 3 AI 分析报告 ----
     ws3 = wb.create_sheet("AI分析报告")
     _write_header(ws3, ["分析来源", "报告正文"])
-    ws3.append([analysis.source, analysis.report])
+    ws3.append([_safe(analysis.source), _safe(analysis.report)])
     ws3.cell(row=2, column=2).alignment = WRAP
     ws3.column_dimensions["A"].width = 18
     ws3.column_dimensions["B"].width = 100
     ws3.row_dimensions[2].height = 230
     if analysis.error:
-        ws3.append(["调用异常", analysis.error])
+        ws3.append(["调用异常", _safe(analysis.error)])
+
+    # ---- Sheet 4 参考来源 ----
+    references = getattr(analysis, "references", None) or []
+    if references:
+        ws4 = wb.create_sheet("参考来源")
+        _write_header(ws4, ["编号", "书名", "作者", "页码", "是否引用", "原文摘录"])
+        for ref in references:
+            start = ref.get("page_start")
+            end = ref.get("page_end")
+            pages = f"{start}" if start == end else f"{start}-{end}"
+            ws4.append([
+                _safe(ref.get("label", "")), _safe(ref.get("book", "")),
+                _safe(ref.get("author", "")), pages,
+                "是" if ref.get("cited") else "", _safe(ref.get("text", "")),
+            ])
+            ws4.cell(row=ws4.max_row, column=6).alignment = WRAP
+        _autosize(ws4, caps={2: 30, 3: 20, 6: 100})
 
     wb.save(path)
     return path

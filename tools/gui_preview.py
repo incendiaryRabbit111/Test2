@@ -133,8 +133,13 @@ def main() -> int:
     # 走一遍完整流程：新建 -> 粘贴 -> 分析
     win.ui.btnNew.click()
     pump(app, 8)
-    win.ui.inputText.setPlainText(win.ui.inputText.toPlainText())
+    # 先截一张"空输入框 + 占位提示"的图
     shot(win, "00_输入页")
+
+    from app.sample import SAMPLE_TEXT
+    win.ui.inputText.setPlainText(SAMPLE_TEXT)
+    # 填上采样时间，让新记录接在 23 条小时数据后面（否则会落到"现在"，图上出现假平线）
+    win.ui.timeInput.setText("2026-10-10 08:00")
 
     win.on_analyze()
     for _ in range(500):

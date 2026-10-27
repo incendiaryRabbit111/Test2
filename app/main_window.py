@@ -24,9 +24,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# 导入用：源码运行时把项目根加进 sys.path（打包后模块已内嵌，不需要）
+_PROJECT_DIR = Path(__file__).resolve().parent.parent
+if str(_PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_DIR))
 
 from app import analyzer as analyzer_mod
 from app import api_config as api_config_mod
@@ -39,6 +40,7 @@ from app.api_dialog import ApiSettingsDialog
 from app.batch_dialog import BatchDialog
 from app.confirm_dialog import ConfirmDialog
 from app.generated.ui_main_window import Ui_MainWindow
+from app.paths import ROOT
 from app.sample import SAMPLE_TEXT
 from app.trend_view import TrendView
 
@@ -47,6 +49,8 @@ COLOR_DOMINANT = QColor("#eaf6ea")
 COLOR_UP = QColor("#c0392b")
 COLOR_DOWN = QColor("#1f6feb")
 REPORT_FONT_PT = 11
+FIRST_RUN_HINT = True          # 首次启动且没配置 AI 时，弹一次引导（测试里关掉）
+SHOW_ERROR_DIALOG = True       # 调用失败时弹窗（测试里必须关掉，否则模态阻塞）
 
 
 class AnalyzeWorker(QObject):
@@ -130,9 +134,8 @@ class MainWindow(QMainWindow):
 
     def _connect(self) -> None:
         self.ui.btnAnalyze.clicked.connect(self.on_analyze)
-        self.ui.btnSample.clicked.connect(lambda: self.ui.inputText.setPlainText(SAMPLE_TEXT))
         self.ui.btnClear.clicked.connect(lambda: self.ui.inputText.clear())
-        self.ui.btnNew.clicked.connect(lambda: self._show_input_page("粘贴数据后点「分析」"))
+        self.ui.btnNew.clicked.connect(self._on_new)
         self.ui.btnExport.clicked.connect(self.on_export)
         self.ui.btnBatchImport.clicked.connect(self.on_batch_import)
         self.ui.btnApiSettings.clicked.connect(self.on_api_settings)
@@ -140,6 +143,21 @@ class MainWindow(QMainWindow):
         self.ui.sessionList.currentRowChanged.connect(self._on_row_changed)
         self.ui.sessionList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.ui.sessionList.customContextMenuRequested.connect(self._on_session_menu)
+
+    def _maybe_first_run_hint(self) -> None:
+        """第一次用、且没有可用 AI 配置时，告诉用户去哪儿填 Key。"""
+        if not FIRST_RUN_HINT or self.analyzer.is_live:
+            return
+        if self.api_store.count() > 0:
+            return
+        QMessageBox.information(
+            self, "还没有配置 AI",
+            "程序现在处于「本地模拟」模式——能跑完流程，但评价和报告是模板文字，"
+            "不是真正的 AI 分析。\n\n"
+            "请点右上角「API 设置」，填入 Base URL、API Key，"
+            "点「获取可用模型」后勾选模型并保存。\n\n"
+            "（如果甲方已提供 Key，填进去即可。）",
+        )
 
     # ---------------- 模型切换 ----------------
     def _reload_providers(self) -> None:
@@ -187,6 +205,12 @@ class MainWindow(QMainWindow):
         dlg = ApiSettingsDialog(self.api_store, self)
         dlg.exec()
         self._reload_providers()
+
+    def _on_new(self) -> None:
+        """新建分析：清空输入框和时间，回到输入页。"""
+        self.ui.inputText.clear()
+        self.ui.timeInput.clear()
+        self._show_input_page("粘贴数据后点「分析」")
 
     # ---------------- 页面切换 ----------------
     def _show_input_page(self, tip: str = "") -> None:
@@ -298,8 +322,14 @@ class MainWindow(QMainWindow):
             self.ui.tblMetrics.setRowCount(0)
             self.ui.tblEvaluations.setRowCount(0)
 
-        self._show_report(rec.report or "（这条记录还没有生成 AI 报告。"
-                                         "可以右键「载入到输入框」后重新分析。）")
+        if rec.error_text:
+            banner = ("⚠ 本次 AI 调用失败，以下是本地模拟内容。\n"
+                      f"{rec.error_text.splitlines()[0]}\n"
+                      "（详见 data/last_error.txt）\n\n")
+            self._show_report(banner + (rec.report or ""))
+        else:
+            self._show_report(rec.report or "（这条记录还没有生成 AI 报告。"
+                                             "可以右键「载入到输入框」后重新分析。）")
         self._show_result_page()
         self.ui.btnExport.setEnabled(bool(rec.species))
 
@@ -437,7 +467,7 @@ class MainWindow(QMainWindow):
             evaluations=[{"species": e.species, "comment": e.comment, "advice": e.advice}
                          for e in analysis.evaluations],
             changes=changes_list, trends=trends_list,
-            analysis_source=analysis.source,
+            analysis_source=analysis.source, error_text=analysis.error,
         ))
 
         self._refresh_trend()
@@ -450,8 +480,16 @@ class MainWindow(QMainWindow):
                f"｜已评价 {covered}/{metrics.species_count} 种｜变化来源：{src}"
                f"｜趋势命中 {len(trends_list)} 条")
         if analysis.error:
-            tip += f"　⚠ {analysis.error[:50]}"
+            tip += "　⚠ 调用失败，见详情"
         self.ui.labelSummary.setText(tip)
+
+        if analysis.error and SHOW_ERROR_DIALOG:
+            QMessageBox.warning(
+                self, "AI 调用失败",
+                f"{analysis.error}\n\n"
+                f"本次已降级为「本地模拟」，结果仅供参考。\n\n"
+                f"原始请求/响应已写入：\n{ROOT / 'data' / 'last_error.txt'}",
+            )
 
     def _refresh_trend(self) -> None:
         self.trend_view.load(self.history.recent(limit=500))

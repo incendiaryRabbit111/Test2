@@ -281,9 +281,98 @@ def test_api_config():
         check("拉取模型列表成功", not err and len(models) >= 1, f"{models}｜{err}")
 
 
+
 # ---------------------------------------------------------------- 7
+def test_analyzer_robustness():
+    """中转站兼容性：不发网络请求，直接喂假响应。"""
+    print("\n=== 7. 中转站兼容性（离线）===")
+    import json as _json
+
+    from app.api_config import ApiConfig
+
+    class FakeResp:
+        def __init__(self, status=200, payload=None):
+            self.status_code = status
+            self._p = payload if payload is not None else {}
+            self.text = _json.dumps(self._p, ensure_ascii=False)
+
+        def json(self):
+            return self._p
+
+    Ex = analyzer_mod.DeepSeekAnalyzer
+    cfg = ApiConfig(name="t", base_url="http://x", model="m", api_key="k")
+
+    # ① content=null 不能再崩
+    c, e = Ex._extract(FakeResp(200, {"choices": [{"message": {"content": None}}]}))
+    check("content=null 不再抛异常", c == "" and e == "", f"content={c!r}")
+
+    # ② 正常正文
+    c, e = Ex._extract(FakeResp(200, {"choices": [{"message": {"content": " 你好 "}}]}))
+    check("正文会去空白", c == "你好" and e == "", repr(c))
+
+    # ③ 多模态分段格式
+    c, _ = Ex._extract(FakeResp(200, {"choices": [{"message": {"content": [
+        {"type": "text", "text": "abc"}, {"type": "text", "text": "def"}]}}]}))
+    check("content 是数组也能取", c == "abcdef", c)
+
+    # ④ 推理模型：正文空，只有 reasoning_content
+    payload = {"choices": [{"message": {"content": None,
+                                        "reasoning_content": '{"a":1}'}}]}
+    c1, _ = Ex._extract(FakeResp(200, payload), allow_reasoning=False)
+    c2, _ = Ex._extract(FakeResp(200, payload), allow_reasoning=True)
+    check("默认不把思考过程当正文", c1 == "")
+    check("JSON 阶段可抢救 reasoning", c2 == '{"a":1}', c2)
+
+    # ⑤ 非 200
+    _, e = Ex._extract(FakeResp(500, {"error": "boom"}))
+    check("非 200 返回可读错误", "HTTP 500" in e, e[:40])
+
+    # ⑥ 空正文提示能指出 max_tokens 用尽
+    hint = Ex._empty_hint(FakeResp(200, {
+        "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 8000,
+                  "completion_tokens_details": {"reasoning_tokens": 7980}}}))
+    check("提示里带用量", "reasoning=7980" in hint, hint.splitlines()[1] if len(hint.splitlines()) > 1 else hint)
+    check("识别出 max_tokens 截断", "max_tokens" in hint)
+
+    # ⑦ 核心：空正文会自动去掉 response_format 重试
+    an = Ex(cfg)
+    calls = []
+
+    def fake_post(body):
+        calls.append(dict(body))
+        if "response_format" in body:
+            return FakeResp(200, {"choices": [{"message": {"content": None}}],
+                                  "usage": {}})
+        return FakeResp(200, {"choices": [{"message": {"content": '{"ok":1}'}}]})
+
+    an._post = fake_post
+    content, err = an._chat("hi", json_mode=True, label="测试")
+    check("空正文触发了重试", len(calls) == 2, f"{len(calls)} 次")
+    check("重试时去掉了 response_format", "response_format" not in calls[-1], str(calls[-1].keys()))
+    check("重试拿到了内容", content == '{"ok":1}' and not err, f"{content!r} / {err}")
+
+    # ⑧ 两次都空 → 明确报错，不再静默
+    calls.clear()
+
+    def always_empty(body):
+        calls.append(dict(body))
+        return FakeResp(200, {"choices": [{"message": {"content": ""}}], "usage": {}})
+
+    an._post = always_empty
+    content, err = an._chat("hi", json_mode=True)
+    check("两次都空就报错", content == "" and "空正文" in err, err.splitlines()[0])
+    check("最多只请求两次", len(calls) == 2, f"{len(calls)} 次")
+
+    # ⑨ 测试连接：HTTP 200 但无正文 → 判定为连通（不再误报失败）
+    an._post = lambda body: FakeResp(200, {"choices": [{"message": {"content": None}}]})
+    ok, msg = an.test_connection()
+    check("测试连接不误报失败", ok and "连接成功" in msg, msg[:50])
+
+
+# ---------------------------------------------------------------- 8
 def test_analyzer(p, m):
-    print("\n=== 7. AI 两阶段（逐物种评价 -> 综合报告）===")
+    print("\n=== 8. AI 两阶段（逐物种评价 -> 综合报告）===")
     analyzer = analyzer_mod.DeepSeekAnalyzer()
     print(f"     分析模式：{analyzer.mode_text}（temperature={analyzer_mod.TEMPERATURE}）")
 
@@ -313,7 +402,7 @@ def test_analyzer(p, m):
 
 # ---------------------------------------------------------------- 7
 def test_export(p, m, result):
-    print("\n=== 8. 导出 ===")
+    print("\n=== 9. 导出 ===")
     changes = trend_mod.compute_changes(p.species, None, p.change)
     change_text = {c.species: c.text for c in changes.values()}
     out = ROOT / "output" / "smoke_test.xlsx"
@@ -338,13 +427,15 @@ def test_export(p, m, result):
 
 # ---------------------------------------------------------------- 8
 def test_gui():
-    print("\n=== 9. 界面（C 布局：左会话列表 / 右详情）===")
+    print("\n=== 10. 界面（C 布局：左会话列表 / 右详情）===")
     from PySide6.QtWidgets import QApplication
 
-    from app.main_window import MainWindow
+    from app import main_window as mw_mod
 
+    mw_mod.FIRST_RUN_HINT = False        # 测试里不弹引导窗
+    mw_mod.SHOW_ERROR_DIALOG = False     # 也不弹错误窗（否则模态阻塞）
     app = QApplication.instance() or QApplication(sys.argv)
-    win = MainWindow()
+    win = mw_mod.MainWindow()
     check("窗口创建成功", win.ui.tblEvaluations is not None)
     check("有会话列表", hasattr(win.ui, "sessionList"))
     check("有「新建分析」按钮", hasattr(win.ui, "btnNew"))
@@ -390,6 +481,24 @@ def test_gui():
     check("趋势图已加载物种按钮", len(win.trend_view._buttons) >= 13,
           f"{len(win.trend_view._buttons)} 个按钮")
 
+    total = len(win.trend_view._names)
+    sel = len(win.trend_view._selected)
+    check("默认勾选了物种", sel > 0, f"{sel}/{total}")
+    check("默认只勾优势种（不是全选）", 0 < sel < total, f"{sel}/{total}")
+    win.trend_view._select_all()
+    check("全选生效", len(win.trend_view._selected) == total, str(len(win.trend_view._selected)))
+    win.trend_view._select_none()
+    check("清空生效", not win.trend_view._selected)
+    win.trend_view._select_dominant()
+    check("只选优势种生效", 0 < len(win.trend_view._selected) < total,
+          str(len(win.trend_view._selected)))
+    win.trend_view._toggle_species(win.trend_view._names[0], True)
+    check("单选切换生效", win.trend_view._names[0] in win.trend_view._selected)
+    win.trend_view._toggle_mode()
+    check("可切换 浓度/相对丰度", win.trend_view._mode == "rel", win.trend_view._mode)
+    check("每个物种都有固定配色", len(win.trend_view._colors) == total,
+          f"{len(win.trend_view._colors)} 个颜色")
+
     # 记录已落库（含评价）
     latest = win.history.last()
     check("最新记录已入库", latest is not None and latest.species_count == 13,
@@ -415,6 +524,7 @@ if __name__ == "__main__":
     test_trend()
     test_history()
     test_api_config()
+    test_analyzer_robustness()
     result = test_analyzer(p, m)
     test_export(p, m, result)
     test_gui()

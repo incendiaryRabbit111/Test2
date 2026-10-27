@@ -45,8 +45,7 @@ class ApiSettingsDialog(QDialog):
 
         root = QVBoxLayout(self)
 
-        tip = QLabel("只支持「OpenAI 兼容」协议——DeepSeek / 通义 / Kimi / 智谱 / Ollama 都是这套。"
-                     "API Key 用 Windows DPAPI 加密后存在本机，换台电脑解不开。")
+        tip = QLabel("目前仅支持 OpenAI 兼容协议。")
         tip.setWordWrap(True)
         tip.setStyleSheet("color:#555; background:#f6f8fa; padding:8px; border-radius:4px;")
         root.addWidget(tip)

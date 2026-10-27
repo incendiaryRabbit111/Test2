@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from app.paths import ROOT
 DB_PATH = ROOT / "data" / "api_configs.db"
 
 # 新增配置时的预填项

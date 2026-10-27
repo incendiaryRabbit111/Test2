@@ -3,7 +3,7 @@
  <class>MainWindow</class>
  <widget class="QMainWindow" name="MainWindow">
   <property name="geometry"><rect><x>0</x><y>0</y><width>1280</width><height>800</height></rect></property>
-  <property name="windowTitle"><string>特征微生物分析工具</string></property>
+  <property name="windowTitle"><string>特征微生物分析工具 (Demo)</string></property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="mainLayout">
     <item>
@@ -50,9 +50,14 @@
        <widget class="QWidget" name="inputPage">
         <layout class="QVBoxLayout" name="inputLayout">
          <item><widget class="QLabel" name="labelInput">
-           <property name="text"><string>① 粘贴仪器输出文本（物种名 + 浓度 + 单位）</string></property></widget></item>
+           <property name="text"><string>粘贴仪器输出文本</string></property></widget></item>
          <item><widget class="QPlainTextEdit" name="inputText">
-           <property name="placeholderText"><string>内管虫: 0.346, 匣壳虫: 0.115, ... 浓度单位(10^6个/L)</string></property></widget></item>
+           <property name="placeholderText"><string>在此粘贴仪器输出文本，例如：
+
+内管虫: 0.346, 匣壳虫: 0.115, 扭曲管叶虫: 0.403, 表壳虫: 1.440 …
+浓度单位(10^6 个/L)
+
+（只写"物种: 浓度"也能识别）</string></property></widget></item>
          <item>
           <layout class="QHBoxLayout" name="timeLayout">
            <item><widget class="QLabel" name="labelTime"><property name="text"><string>采样时间：</string></property></widget></item>
@@ -66,8 +71,6 @@
          </item>
          <item>
           <layout class="QHBoxLayout" name="buttonLayout">
-           <item><widget class="QPushButton" name="btnSample"><property name="text"><string>载入示例</string></property></widget></item>
-           <item><widget class="QPushButton" name="btnSample2"><property name="text"><string>载入示例②</string></property></widget></item>
            <item><widget class="QPushButton" name="btnAnalyze"><property name="text"><string>分析</string></property></widget></item>
            <item><widget class="QPushButton" name="btnClear"><property name="text"><string>清空</string></property></widget></item>
            <item><spacer name="btnSpacer">
@@ -86,23 +89,23 @@
           <widget class="QTabWidget" name="tabResults">
            <property name="currentIndex"><number>0</number></property>
            <widget class="QWidget" name="tabMetrics">
-            <attribute name="title"><string>② 计算指标</string></attribute>
+            <attribute name="title"><string>① 计算指标</string></attribute>
             <layout class="QVBoxLayout" name="metricsLayout">
              <item><widget class="QTableWidget" name="tblMetrics"/></item></layout>
            </widget>
            <widget class="QWidget" name="tabEvaluations">
-            <attribute name="title"><string>③ 物种评价</string></attribute>
+            <attribute name="title"><string>② 物种评价</string></attribute>
             <layout class="QVBoxLayout" name="evaluationsLayout">
              <item><widget class="QTableWidget" name="tblEvaluations"/></item></layout>
            </widget>
            <widget class="QWidget" name="tabReport">
-            <attribute name="title"><string>④ AI 分析报告</string></attribute>
+            <attribute name="title"><string>③ AI 分析报告</string></attribute>
             <layout class="QVBoxLayout" name="reportLayout">
              <item><widget class="QPlainTextEdit" name="txtReport">
                <property name="readOnly"><bool>true</bool></property></widget></item></layout>
            </widget>
            <widget class="QWidget" name="tabTrend">
-            <attribute name="title"><string>⑤ 趋势对比</string></attribute>
+            <attribute name="title"><string>④ 趋势对比</string></attribute>
             <layout class="QVBoxLayout" name="trendLayout">
              <item><widget class="QWidget" name="trendHolder" native="true"/></item></layout>
            </widget>

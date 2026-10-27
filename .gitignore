@@ -12,3 +12,4 @@ output/
 *.xlsx 
 *.log 
 .idea/ 
+data/last_error.txt

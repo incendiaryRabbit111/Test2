@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
 
-ROOT = Path(__file__).resolve().parent.parent
+from app.paths import ROOT
 TEMPERATURE = 0.2          # 结论稳定性优先；想更灵活可调到 0.4
 
 SYSTEM_PROMPT = """你是污水处理厂活性污泥微生物镜检分析专家，精通各类指示生物在活性污泥法工艺判断中的意义。你服务的对象是专业人员，不需要科普基础概念。"""
@@ -141,8 +142,16 @@ class DeepSeekAnalyzer:
         return f"{name}（{self.model}）"
 
     # ---------------- 底层调用 ----------------
-    def _chat(self, user_prompt: str, json_mode: bool = False, max_tokens: int = 8000) -> tuple[str, str]:
-        """返回 (内容, 错误信息)。"""
+    def _chat(self, user_prompt: str, json_mode: bool = False,
+              max_tokens: int = 8000, label: str = "") -> tuple[str, str]:
+        """返回 (内容, 错误信息)。
+
+        容错顺序：
+          1. 带 response_format 请求
+          2. 若「非 200」**或「200 但正文为空」** → 去掉 response_format 再试一次
+             （很多中转站不认识这个参数，会返回 200 + content=null 而不是报错）
+          3. 仍然失败 → 返回可读的错误，并把原始响应 dump 到 data/last_error.txt
+        """
         body = {
             "model": self.model,
             "messages": [
@@ -154,17 +163,126 @@ class DeepSeekAnalyzer:
         }
         if json_mode:
             body["response_format"] = {"type": "json_object"}
+
         try:
             resp = self._post(body)
-            # 有些模型不支持 json_object，去掉该参数再试一次
-            if json_mode and resp.status_code != 200:
-                body.pop("response_format", None)
-                resp = self._post(body)
-            if resp.status_code != 200:
-                return "", f"API 返回 {resp.status_code}：{resp.text[:200]}"
-            return resp.json()["choices"][0]["message"]["content"].strip(), ""
         except Exception as exc:
-            return "", f"{type(exc).__name__}：{exc}"
+            msg = f"网络错误：{type(exc).__name__}：{exc}"
+            self._dump(label, body, None, msg)
+            return "", msg
+
+        content, err = self._extract(resp, allow_reasoning=json_mode)
+
+        # 关键修复：不仅"非 200"要重试，"200 但空正文"也要重试
+        if json_mode and (err or not content):
+            body.pop("response_format", None)
+            try:
+                resp = self._post(body)
+            except Exception as exc:
+                msg = f"网络错误：{type(exc).__name__}：{exc}"
+                self._dump(label, body, None, msg)
+                return "", msg
+            retry_content, retry_err = self._extract(resp, allow_reasoning=False)
+            if retry_content:
+                content, err = retry_content, ""
+            elif not err:
+                err = retry_err
+
+        if content:
+            return content, ""
+
+        msg = err or self._empty_hint(resp)
+        self._dump(label, body, resp, msg)
+        return "", msg
+
+    @staticmethod
+    def _extract(resp, allow_reasoning: bool = False) -> tuple[str, str]:
+        """从响应里抠出正文。返回 (content, 错误信息)。"""
+        if resp.status_code != 200:
+            return "", f"HTTP {resp.status_code}：{(resp.text or '')[:300]}"
+        try:
+            data = resp.json()
+        except Exception:
+            return "", f"返回的不是 JSON：{(resp.text or '')[:300]}"
+        if not isinstance(data, dict):
+            return "", f"返回结构异常：{str(data)[:200]}"
+
+        choices = data.get("choices") or []
+        if not choices:
+            return "", f"返回里没有 choices：{str(data)[:300]}"
+        message = choices[0].get("message") or {}
+
+        content = message.get("content")
+        if isinstance(content, list):          # 多模态分段格式
+            buf = []
+            for part in content:
+                if isinstance(part, dict):
+                    buf.append(part.get("text") or "")
+                elif isinstance(part, str):
+                    buf.append(part)
+            content = "".join(buf)
+        content = (content or "").strip()
+
+        if not content and allow_reasoning:
+            # 推理模型：正文为空，但思考过程里有内容（JSON 阶段可以抢救）
+            content = (message.get("reasoning_content") or "").strip()
+
+        return content, ""
+
+    @staticmethod
+    def _empty_hint(resp) -> str:
+        """正文为空时，给出能直接定位原因的提示。"""
+        usage, finish = "", ""
+        try:
+            data = resp.json()
+            u = data.get("usage") or {}
+            bits = []
+            if u.get("prompt_tokens") is not None:
+                bits.append(f"prompt={u.get('prompt_tokens')}")
+            if u.get("completion_tokens") is not None:
+                bits.append(f"completion={u.get('completion_tokens')}")
+            detail = u.get("completion_tokens_details") or {}
+            if detail.get("reasoning_tokens"):
+                bits.append(f"reasoning={detail['reasoning_tokens']}")
+            usage = "，".join(bits)
+            finish = str((data.get("choices") or [{}])[0].get("finish_reason") or "")
+        except Exception:
+            pass
+
+        msg = "模型返回了空正文（HTTP 200，但 content 为空）"
+        if usage:
+            msg += f"\n用量：{usage}" + (f"｜finish_reason={finish}" if finish else "")
+        if finish == "length":
+            msg += ("\n→ 输出被 max_tokens 截断：推理模型会先消耗 reasoning tokens。"
+                    "请在「API 设置」把超时/预算调大，或改用非推理模型。")
+        else:
+            msg += ("\n→ 可能原因：① 推理模型把 token 花在思考上；"
+                    "② 中转站不支持某些参数；③ 该服务只支持流式返回。")
+        return msg
+
+    def _dump(self, label: str, body: dict, resp, err: str) -> None:
+        """把出错时的原始响应写进 data/last_error.txt，方便排查中转站。"""
+        try:
+            path = ROOT / "data" / "last_error.txt"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            brief = {k: v for k, v in body.items() if k != "messages"}
+            lines = [
+                f"时间：{datetime.now():%Y-%m-%d %H:%M:%S}",
+                f"阶段：{label or '未标注'}",
+                f"URL：{self.base_url.rstrip('/')}/chat/completions",
+                f"模型：{self.model}",
+                f"请求参数：{json.dumps(brief, ensure_ascii=False)}",
+                f"messages 条数：{len(body.get('messages') or [])}",
+                "",
+                "---- 错误 ----",
+                err,
+            ]
+            if resp is not None:
+                lines += ["", f"---- HTTP {resp.status_code} 原始响应（前 4000 字）----",
+                          (resp.text or "")[:4000]]
+            path.write_text("\n".join(lines), encoding="utf-8")
+        except Exception:
+            pass
 
     def _post(self, body: dict):
         return requests.post(
@@ -176,13 +294,33 @@ class DeepSeekAnalyzer:
         )
 
     def test_connection(self) -> tuple[bool, str]:
-        """给配置界面用的连通性测试。"""
+        """给配置界面用的连通性测试。
+
+        注意：**HTTP 200 就算连通**，即使正文是空的（推理模型很常见）。
+        """
         if not self.is_live:
             return False, "配置不完整：base_url / 模型名 / API Key 都要填"
-        text, err = self._chat("只回复两个字：收到", json_mode=False, max_tokens=16)
+        body = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": "只回复两个字：收到"}],
+            "temperature": 0,
+            "max_tokens": 256,
+        }
+        try:
+            resp = self._post(body)
+        except Exception as exc:
+            return False, f"网络错误：{type(exc).__name__}：{exc}"
+
+        if resp.status_code != 200:
+            return False, f"HTTP {resp.status_code}：{(resp.text or '')[:200]}"
+
+        content, err = self._extract(resp, allow_reasoning=True)
+        if content:
+            return True, f"连接成功，模型回复「{content[:30]}」"
         if err:
             return False, err
-        return True, f"连接成功，模型回复「{text[:30]}」"
+        return True, ("连接成功（HTTP 200），但模型没返回正文——可能是推理模型，"
+                      "实际分析时请留意 max_tokens 是否够用")
 
     @staticmethod
     def _parse_json(content: str) -> dict | None:
@@ -271,7 +409,8 @@ class DeepSeekAnalyzer:
             return self._mock(payload, "未配置 DEEPSEEK_API_KEY")
 
         # —— 阶段一 ——
-        content, err = self._chat(self.build_stage1_prompt(payload), json_mode=True)
+        content, err = self._chat(self.build_stage1_prompt(payload), json_mode=True,
+                                  max_tokens=8000, label="阶段一：逐物种评价")
         if not content:
             return self._mock(payload, err)
         data = self._parse_json(content)
@@ -292,7 +431,8 @@ class DeepSeekAnalyzer:
 
         # —— 阶段二（必须看到阶段一的产出）——
         report, err2 = self._chat(
-            self.build_stage2_prompt(payload, evals), json_mode=False, max_tokens=1500
+            self.build_stage2_prompt(payload, evals), json_mode=False,
+            max_tokens=4000, label="阶段二：综合报告",
         )
         if not report:
             report = self._fallback_report(payload, evals)

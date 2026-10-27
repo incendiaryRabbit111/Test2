@@ -413,7 +413,10 @@ def test_export(p, m, result):
           f"{out.stat().st_size if out.exists() else 0} 字节")
     from openpyxl import load_workbook
     wb = load_workbook(out)
-    check("三个 sheet", wb.sheetnames == ["物种评价", "检测概要", "AI分析报告"], str(wb.sheetnames))
+    expected_sheets = ["物种评价", "检测概要", "AI分析报告"]
+    if getattr(result, "references", None):
+        expected_sheets.append("参考来源")
+    check("sheet 结构", wb.sheetnames == expected_sheets, str(wb.sheetnames))
     ws = wb["物种评价"]
     want = ["序号", "物种", "浓度", "相对丰度(%)", "等级", "较上次变化", "综合评价", "指导意见"]
     got = [ws.cell(row=1, column=i).value for i in range(1, ws.max_column + 1)]

@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,15 +42,20 @@ from app.confirm_dialog import ConfirmDialog
 from app.generated.ui_main_window import Ui_MainWindow
 from app.paths import ROOT
 from app.sample import SAMPLE_TEXT
+from app.onboarding import OnboardingOverlay, Step
 from app.trend_view import TrendView
 
-COLOR_ABSOLUTE = QColor("#ffe0e0")
-COLOR_DOMINANT = QColor("#eaf6ea")
+from app.theme import ROW_ABSOLUTE, ROW_DOMINANT
+
+COLOR_ABSOLUTE = QColor(ROW_ABSOLUTE)
+COLOR_DOMINANT = QColor(ROW_DOMINANT)
 COLOR_UP = QColor("#c0392b")
 COLOR_DOWN = QColor("#1f6feb")
-REPORT_FONT_PT = 11
+REPORT_FONT_PT = 13
 FIRST_RUN_HINT = True          # 首次启动且没配置 AI 时，弹一次引导（测试里关掉）
 SHOW_ERROR_DIALOG = True       # 调用失败时弹窗（测试里必须关掉，否则模态阻塞）
+FORCE_GUIDE = False           # --guide 时强制显示新手引导
+SUPPRESS_GUIDE = False        # 截图/测试时关掉引导
 
 
 class AnalyzeWorker(QObject):
@@ -83,6 +88,9 @@ class MainWindow(QMainWindow):
         self._current = None            # 当前展示的 Record
         self._thread = None
         self._worker = None
+        self._settings = QSettings("MicrobeAnalyzer", "App")
+        self._guide = None
+        self._guide_checked = False
 
         self._setup_tables()
         self._setup_report_view()
@@ -93,7 +101,6 @@ class MainWindow(QMainWindow):
         self.ui.inputText.setMinimumHeight(300)
 
         self._reload_providers()
-        self.ui.inputText.setPlainText(SAMPLE_TEXT)
 
         self._refresh_trend()
         self._reload_sessions(select_id=None)
@@ -103,12 +110,67 @@ class MainWindow(QMainWindow):
             self.ui.labelSummary.setText(f"已载入 {self.history.count()} 条历史记录")
 
     # ---------------- 初始化 ----------------
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self._guide_checked:
+            return
+        self._guide_checked = True
+        if SUPPRESS_GUIDE:
+            return
+        done = self._settings.value("onboarded", False, type=bool)
+        if FORCE_GUIDE or not done:
+            QTimer.singleShot(600, self.start_onboarding)
+
+    def start_onboarding(self) -> None:
+        if self._guide is not None:
+            return
+        # 教程讲的是输入流程，先把右侧切回输入页，免得箭头指向隐藏控件
+        self.ui.rightStack.setCurrentWidget(self.ui.inputPage)
+        steps = [
+            Step("欢迎使用",
+                 "这个工具把仪器输出的文字，变成有依据的分析报告。"
+                 "花一分钟，带你走一遍最基本的流程。"),
+            Step("第一步：配置模型",
+                 "点这里填入 Base URL 和 API Key，程序会自动拉取可用模型，"
+                 "勾选后保存。以后可以在同一处随时切换模型。",
+                 target="btnApiSettings"),
+            Step("第二步：新建一次分析",
+                 "每次检测都从「新建分析」开始。左侧列表会按导入顺序自动编号，"
+                 "点任意一条可以回看当时的报告。",
+                 target="btnNew"),
+            Step("第三步：粘贴数据",
+                 "把仪器输出的文本粘进来。只写「物种: 浓度」也能识别，"
+                 "全角标点、Excel 复制的表格都兼容。",
+                 target="inputText"),
+            Step("第四步：填采样时间",
+                 "建议填上采样时间，趋势图按它排序；留空就用导入时间。",
+                 target="timeInput"),
+            Step("第五步：开始分析",
+                 "点「分析」，程序会解析、计算指标、查本地文献库，再调用 AI，"
+                 "十几秒出结果。",
+                 target="btnAnalyze"),
+            Step("分析完成之后",
+                 "右侧有四个页签：计算指标、物种评价、AI 分析报告、趋势对比。"
+                 "需要表格时点右下角「导出当前记录」。"),
+        ]
+        self._guide = OnboardingOverlay(self, steps)
+        self._guide.finished.connect(self._on_guide_finished)
+        self._guide.start()
+
+    def _on_guide_finished(self) -> None:
+        self._settings.setValue("onboarded", True)
+        if self._guide is not None:
+            self._guide.deleteLater()
+            self._guide = None
+
     def _setup_tables(self) -> None:
         t1 = self.ui.tblMetrics
         t1.setColumnCount(5)
         t1.setHorizontalHeaderLabels(["物种", "浓度", "相对丰度(%)", "优势种群", "绝对优势种群"])
         t1.verticalHeader().setVisible(False)
         t1.setEditTriggers(t1.EditTrigger.NoEditTriggers)
+        t1.setShowGrid(False)
+        t1.setAlternatingRowColors(True)
 
         t2 = self.ui.tblEvaluations
         t2.setColumnCount(6)
@@ -117,6 +179,8 @@ class MainWindow(QMainWindow):
         t2.verticalHeader().setVisible(False)
         t2.setWordWrap(True)
         t2.setEditTriggers(t2.EditTrigger.NoEditTriggers)
+        t2.setShowGrid(False)
+        t2.setAlternatingRowColors(True)
 
     def _setup_report_view(self) -> None:
         view = self.ui.txtReport
@@ -139,6 +203,8 @@ class MainWindow(QMainWindow):
         self.ui.btnExport.clicked.connect(self.on_export)
         self.ui.btnBatchImport.clicked.connect(self.on_batch_import)
         self.ui.btnApiSettings.clicked.connect(self.on_api_settings)
+        self.ui.btnGuide.clicked.connect(self.start_onboarding)
+        self.ui.btnGuide.setCursor(Qt.CursorShape.PointingHandCursor)
         self.ui.comboProvider.currentIndexChanged.connect(self._apply_provider)
         self.ui.sessionList.currentRowChanged.connect(self._on_row_changed)
         self.ui.sessionList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -224,17 +290,18 @@ class MainWindow(QMainWindow):
 
     # ---------------- 会话列表 ----------------
     def _reload_sessions(self, select_id: int | None = None) -> None:
-        recs = self.history.all_desc()
+        # 按导入顺序升序：最早导入的是第 1 条
+        recs = list(reversed(self.history.all_desc()))
         self.ui.sessionList.blockSignals(True)
         self.ui.sessionList.clear()
         row_of = {}
-        for i, rec in enumerate(recs):
-            item = QListWidgetItem(f"{rec.title}\n{rec.subtitle}")
+        for idx, rec in enumerate(recs, start=1):
+            item = QListWidgetItem(f"{idx:02d}     {rec.title}")
             item.setData(Qt.ItemDataRole.UserRole, rec.id)
-            item.setToolTip(f"{rec.title}\n物种 {rec.species_count} 个　H'={rec.shannon_h}\n"
+            item.setToolTip(f"第 {idx} 条｜物种 {rec.species_count} 个｜H'={rec.shannon_h}｜"
                             f"{'已分析' if rec.report else '未分析'}")
             self.ui.sessionList.addItem(item)
-            row_of[rec.id] = i
+            row_of[rec.id] = idx - 1
         self.ui.sessionList.blockSignals(False)
         self.ui.labelCount.setText(f"共 {len(recs)} 条")
 
@@ -242,6 +309,7 @@ class MainWindow(QMainWindow):
             row = row_of[select_id]
             if self.ui.sessionList.currentRow() != row:
                 self.ui.sessionList.setCurrentRow(row)      # 触发 _on_row_changed
+                self.ui.sessionList.scrollToItem(self.ui.sessionList.item(row))
             else:
                 self._show_record(recs[row])
         elif recs:
@@ -309,8 +377,6 @@ class MainWindow(QMainWindow):
     # ---------------- 展示一条记录 ----------------
     def _show_record(self, rec) -> None:
         self._current = rec
-        src = f"　｜　分析来源：{rec.analysis_source}" if rec.analysis_source else "　｜　未分析"
-        self.ui.labelSession.setText(f"当前记录：{rec.title}{src}")
         self._change_map = {d.get("species"): d for d in (rec.changes or [])}
         self._trends = rec.trends or []
 
@@ -349,7 +415,13 @@ class MainWindow(QMainWindow):
                     item.setBackground(QBrush(COLOR_DOMINANT))
                 t.setItem(i, j, item)
         t.resizeColumnsToContents()
-        t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header = t.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        t.setColumnWidth(0, 220)
+        for c in (1, 2):
+            header.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        for c in (3, 4):
+            header.setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
 
     def _change_cell(self, name: str) -> QTableWidgetItem:
         d = self._change_map.get(name) or {}
@@ -385,12 +457,13 @@ class MainWindow(QMainWindow):
                 elif r.is_dominant and j < 4:
                     item.setBackground(QBrush(COLOR_DOMINANT))
                 t.setItem(i, j, item)
-        t.resizeRowsToContents()
         header = t.horizontalHeader()
         for col in range(4):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        # 必须在列宽确定之后再做行高，否则换行宽度变了文字会被截断
+        t.resizeRowsToContents()
 
     def _show_report(self, text: str, references: list | None = None) -> None:
         """把「情况/变化/建议」各段拆开，并在末尾附上参考来源。"""
@@ -405,9 +478,7 @@ class MainWindow(QMainWindow):
                 ref_lines.append(
                     f"[{ref.get('label', '')}] 《{ref.get('book', '')}》{pages}{flag}"
                 )
-                snippet = (ref.get("text") or "").strip().replace("\n", " ")
-                if snippet:
-                    ref_lines.append("    " + snippet[:160])
+
             body = body + "\n\n\n" + "\n".join(ref_lines)
         self.ui.txtReport.setPlainText(body)
 

@@ -20,5 +20,6 @@
   },
   "terminal.integrated.env.windows": {
     "PYTHONUTF8": "1"
-  }
+  },
+  "python.terminal.useEnvFile": true
 }

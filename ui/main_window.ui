@@ -7,21 +7,48 @@
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="mainLayout">
     <item>
-     <layout class="QHBoxLayout" name="topLayout">
-      <item><widget class="QLabel" name="labelMode"><property name="text"><string>使用模型：</string></property></widget></item>
-      <item><widget class="QComboBox" name="comboProvider">
-        <property name="minimumSize"><size><width>250</width><height>0</height></size></property></widget></item>
-      <item><widget class="QPushButton" name="btnApiSettings"><property name="text"><string>API 设置</string></property></widget></item>
-      <item><widget class="QLabel" name="labelModeValue">
-        <property name="text"><string>-</string></property>
-        <property name="styleSheet"><string>color:#1a7f37;font-weight:bold;</string></property></widget></item>
-      <item><spacer name="topSpacer">
-        <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
-        <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
-      <item><widget class="QCheckBox" name="chkConfirm">
-        <property name="text"><string>分析前核对解析结果</string></property>
-        <property name="checked"><bool>true</bool></property></widget></item>
-     </layout>
+     <widget class="QWidget" name="topBar">
+      <layout class="QHBoxLayout" name="topLayout">
+       <property name="leftMargin"><number>20</number></property>
+       <property name="topMargin"><number>9</number></property>
+       <property name="rightMargin"><number>20</number></property>
+       <property name="bottomMargin"><number>9</number></property>
+       <property name="spacing"><number>10</number></property>
+       <item>
+        <layout class="QVBoxLayout" name="titleBox">
+         <property name="spacing"><number>1</number></property>
+         <item><widget class="QLabel" name="labelTitle">
+           <property name="text"><string>特征微生物分析工具</string></property>
+           <property name="styleSheet"><string>font-size:16px;font-weight:600;color:#1C262D;</string></property></widget></item>
+         <item><widget class="QLabel" name="labelSubtitle">
+           <property name="text"><string>微生物镜检分析 · 本地知识库</string></property>
+           <property name="styleSheet"><string>font-size:11px;color:#8C9B93;</string></property></widget></item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btnGuide">
+         <property name="minimumSize"><size><width>22</width><height>22</height></size></property>
+         <property name="maximumSize"><size><width>22</width><height>22</height></size></property>
+         <property name="text"><string>?</string></property>
+         <property name="toolTip"><string>观看使用教程</string></property>
+        </widget>
+       </item>
+       <item><spacer name="topSpacer">
+         <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+         <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+       <item><widget class="QLabel" name="labelMode"><property name="text"><string>使用模型</string></property>
+         <property name="styleSheet"><string>color:#5C6C64;</string></property></widget></item>
+       <item><widget class="QComboBox" name="comboProvider">
+         <property name="minimumSize"><size><width>250</width><height>0</height></size></property></widget></item>
+       <item><widget class="QPushButton" name="btnApiSettings"><property name="text"><string>API 设置</string></property></widget></item>
+       <item><widget class="QLabel" name="labelModeValue">
+         <property name="text"><string>-</string></property>
+         <property name="styleSheet"><string>color:#1a7f37;font-weight:600;</string></property></widget></item>
+       <item><widget class="QCheckBox" name="chkConfirm">
+         <property name="text"><string>分析前核对解析结果</string></property>
+         <property name="checked"><bool>true</bool></property></widget></item>
+      </layout>
+     </widget>
     </item>
     <item>
      <widget class="QSplitter" name="splitter">
@@ -33,6 +60,11 @@
        <property name="minimumSize"><size><width>210</width><height>0</height></size></property>
        <property name="maximumSize"><size><width>280</width><height>16777215</height></size></property>
        <layout class="QVBoxLayout" name="leftLayout">
+        <property name="leftMargin"><number>12</number></property>
+        <property name="topMargin"><number>12</number></property>
+        <property name="rightMargin"><number>12</number></property>
+        <property name="bottomMargin"><number>12</number></property>
+        <property name="spacing"><number>8</number></property>
         <item><widget class="QPushButton" name="btnNew">
           <property name="text"><string>＋ 新建分析</string></property></widget></item>
         <item><widget class="QLabel" name="labelListTitle">
@@ -49,6 +81,11 @@
       <widget class="QStackedWidget" name="rightStack">
        <widget class="QWidget" name="inputPage">
         <layout class="QVBoxLayout" name="inputLayout">
+        <property name="leftMargin"><number>18</number></property>
+        <property name="topMargin"><number>16</number></property>
+        <property name="rightMargin"><number>18</number></property>
+        <property name="bottomMargin"><number>16</number></property>
+        <property name="spacing"><number>10</number></property>
          <item><widget class="QLabel" name="labelInput">
            <property name="text"><string>粘贴仪器输出文本</string></property></widget></item>
          <item><widget class="QPlainTextEdit" name="inputText">
@@ -71,7 +108,7 @@
          </item>
          <item>
           <layout class="QHBoxLayout" name="buttonLayout">
-           <item><widget class="QPushButton" name="btnAnalyze"><property name="text"><string>分析</string></property></widget></item>
+           
            <item><widget class="QPushButton" name="btnClear"><property name="text"><string>清空</string></property></widget></item>
            <item><spacer name="btnSpacer">
              <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
@@ -82,9 +119,11 @@
        </widget>
        <widget class="QWidget" name="resultPage">
         <layout class="QVBoxLayout" name="resultLayout">
-         <item><widget class="QLabel" name="labelSession">
-           <property name="text"><string>（未选择记录）</string></property>
-           <property name="styleSheet"><string>color:#1f6feb;font-weight:bold;</string></property></widget></item>
+        <property name="leftMargin"><number>18</number></property>
+        <property name="topMargin"><number>14</number></property>
+        <property name="rightMargin"><number>18</number></property>
+        <property name="bottomMargin"><number>14</number></property>
+        <property name="spacing"><number>10</number></property>
          <item>
           <widget class="QTabWidget" name="tabResults">
            <property name="currentIndex"><number>0</number></property>
@@ -122,6 +161,7 @@
       <item><spacer name="bottomSpacer">
         <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
         <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+      <item><widget class="QPushButton" name="btnAnalyze"><property name="text"><string>分析</string></property></widget></item>
       <item><widget class="QPushButton" name="btnExport">
         <property name="enabled"><bool>false</bool></property>
         <property name="text"><string>导出当前记录</string></property></widget></item>

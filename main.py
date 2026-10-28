@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.main_window import MainWindow
+from app import main_window as mw_mod
+from app.theme import apply as apply_theme
 
 
 def _app_icon() -> QIcon:
@@ -28,7 +29,10 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("特征微生物分析工具")
     app.setWindowIcon(_app_icon())
-    win = MainWindow()
+    apply_theme(app)
+    if "--guide" in sys.argv:
+        mw_mod.FORCE_GUIDE = True
+    win = mw_mod.MainWindow()
     win.show()
     return app.exec()
 

@@ -18,7 +18,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app import history as history_mod
-from app.main_window import MainWindow
+from app import main_window as mw_mod
+from app.theme import apply as apply_theme
 
 OUT = ROOT / "output" / "preview.png"
 
@@ -122,8 +123,10 @@ def shot(win, name: str) -> None:
 def main() -> int:
     seed_api()
     seed_history()
+    mw_mod.SUPPRESS_GUIDE = True      # 自动引导关掉，后面单独渲染
     app = QApplication(sys.argv)
-    win = MainWindow()
+    apply_theme(app)
+    win = mw_mod.MainWindow()
     win.resize(1280, 800)
     win.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     win.show()
@@ -142,7 +145,7 @@ def main() -> int:
     win.ui.timeInput.setText("2026-10-10 08:00")
 
     win.on_analyze()
-    for _ in range(500):
+    for _ in range(1500):
         app.processEvents()
         if win._pending is None:
             break
@@ -204,6 +207,17 @@ def main() -> int:
     ad.hide()
     ad.deleteLater()
     pump(app, 8)
+
+    # 新手引导：第 2 步（指向 API 设置）
+    win.start_onboarding()
+    pump(app, 20)
+    if win._guide is not None:
+        win._guide._goto(1)
+        pump(app, 12)
+        win.grab().save(str(OUT.with_name("preview_09_新手引导.png")))
+        print("saved", OUT.with_name("preview_09_新手引导.png"))
+        win._guide._finish()
+        pump(app, 8)
 
     return 0
 

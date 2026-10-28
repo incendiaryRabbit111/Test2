@@ -464,7 +464,7 @@ def test_gui():
     win.ui.btnNew.click()
     check("「新建分析」切到输入页", win.ui.rightStack.currentWidget() is win.ui.inputPage)
 
-    win.ui.chkConfirm.setChecked(False)
+    win._confirm_action.setChecked(False)
     win.ui.inputText.setPlainText(SAMPLE_TEXT)
     win.on_analyze()
     for _ in range(800):

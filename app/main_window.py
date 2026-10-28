@@ -10,18 +10,21 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QBrush, QColor
+from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
+    QHBoxLayout,
     QHeaderView,
+    QLabel,
     QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 # 导入用：源码运行时把项目根加进 sys.path（打包后模块已内嵌，不需要）
@@ -72,6 +75,29 @@ class AnalyzeWorker(QObject):
         self.finished.emit(self.analyzer.analyze(self.payload))
 
 
+class BusyOverlay(QWidget):
+    """分析期间盖在结果区上的半透明遮罩，防止重复点击。"""
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background: rgba(255,255,255,218);")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lab = QLabel("正在分析，请稍候…")
+        lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lab.setStyleSheet("color:#2F7D5D;font-size:13px;font-weight:600;background:transparent;")
+        lay.addWidget(lab)
+        self.hide()
+
+    def cover(self) -> None:
+        parent = self.parentWidget()
+        if parent is not None:
+            self.setGeometry(parent.rect())
+            self.show()
+            self.raise_()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -91,13 +117,16 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("MicrobeAnalyzer", "App")
         self._guide = None
         self._guide_checked = False
+        self._dot_cache: dict[bool, QIcon] = {}
 
+        self._setup_more_menu()
+        self._busy = BusyOverlay(self.ui.tabResults)
         self._setup_tables()
         self._setup_report_view()
         self._setup_trend_view()
         self._connect()
         self.ui.mainLayout.setStretchFactor(self.ui.splitter, 1)
-        self.ui.leftLayout.setStretchFactor(self.ui.sessionList, 1)
+        self.ui.leftLayout.setStretchFactor(self.ui.listStack, 1)
         self.ui.inputText.setMinimumHeight(300)
 
         self._reload_providers()
@@ -107,7 +136,7 @@ class MainWindow(QMainWindow):
         if self.history.count() == 0:
             self._show_input_page("还没有任何记录，粘贴数据后点「分析」")
         else:
-            self.ui.labelSummary.setText(f"已载入 {self.history.count()} 条历史记录")
+            self._set_status(f"已载入 {self.history.count()} 条历史记录")
 
     # ---------------- 初始化 ----------------
     def showEvent(self, event) -> None:
@@ -162,6 +191,15 @@ class MainWindow(QMainWindow):
         if self._guide is not None:
             self._guide.deleteLater()
             self._guide = None
+
+    def _setup_more_menu(self) -> None:
+        self._confirm_action = QAction("分析前核对解析结果", self)
+        self._confirm_action.setCheckable(True)
+        self._confirm_action.setChecked(True)
+        menu = QMenu(self)
+        menu.addAction(self._confirm_action)
+        self.ui.btnMore.setMenu(menu)
+        self.ui.btnMore.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def _setup_tables(self) -> None:
         t1 = self.ui.tblMetrics
@@ -283,20 +321,57 @@ class MainWindow(QMainWindow):
         self.ui.rightStack.setCurrentWidget(self.ui.inputPage)
         self.ui.btnExport.setEnabled(False)
         if tip:
-            self.ui.labelSummary.setText(tip)
+            self._set_status(tip)
 
     def _show_result_page(self) -> None:
         self.ui.rightStack.setCurrentWidget(self.ui.resultPage)
 
     # ---------------- 会话列表 ----------------
+    def _set_status(self, text: str, pills: list[tuple[str, str]] | None = None) -> None:
+        """底部状态：左边一句说明，右边若干胶囊。"""
+        self.ui.labelSummary.setText(text)
+        lay = self.ui.pillLayout
+        while lay.count():
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        for label, value in (pills or []):
+            chip = QLabel(f"{label} {value}")
+            chip.setObjectName("pill")
+            lay.addWidget(chip)
+
+    def _dot_icon(self, filled: bool) -> QIcon:
+        """列表前的状态点：实心=已分析，空心=未分析。"""
+        if filled in self._dot_cache:
+            return self._dot_cache[filled]
+        pm = QPixmap(12, 12)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if filled:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#2F7D5D"))
+            p.drawEllipse(2, 2, 8, 8)
+        else:
+            p.setPen(QPen(QColor("#C3D0CA"), 1.4))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(3, 3, 6, 6)
+        p.end()
+        icon = QIcon(pm)
+        self._dot_cache[filled] = icon
+        return icon
+
     def _reload_sessions(self, select_id: int | None = None) -> None:
         # 按导入顺序升序：最早导入的是第 1 条
         recs = list(reversed(self.history.all_desc()))
+        self.ui.listStack.setCurrentWidget(self.ui.listPage if recs else self.ui.emptyPage)
         self.ui.sessionList.blockSignals(True)
         self.ui.sessionList.clear()
         row_of = {}
         for idx, rec in enumerate(recs, start=1):
             item = QListWidgetItem(f"{idx:02d}     {rec.title}")
+            item.setIcon(self._dot_icon(bool(rec.report)))
             item.setData(Qt.ItemDataRole.UserRole, rec.id)
             item.setToolTip(f"第 {idx} 条｜物种 {rec.species_count} 个｜H'={rec.shannon_h}｜"
                             f"{'已分析' if rec.report else '未分析'}")
@@ -372,7 +447,7 @@ class MainWindow(QMainWindow):
         # 删除后不清算已有的"较上次变化"快照（那是当时算的），只刷新展示
         self._refresh_trend()
         self._reload_sessions(select_id=None)
-        self.ui.labelSummary.setText(f"已删除「{rec.title}」｜历史库还剩 {self.history.count()} 条")
+        self._set_status(f"已删除「{rec.title}」｜历史库还剩 {self.history.count()} 条")
 
     # ---------------- 展示一条记录 ----------------
     def _show_record(self, rec) -> None:
@@ -490,10 +565,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "解析失败", "\n".join(parsed.warnings) or "没有识别到任何物种数据")
             return
 
-        if self.ui.chkConfirm.isChecked():
+        if self._confirm_action.isChecked():
             dlg = ConfirmDialog(parsed, self)
             if dlg.exec() != ConfirmDialog.DialogCode.Accepted:
-                self.ui.labelSummary.setText("已取消（解析结果未确认）")
+                self._set_status("已取消（解析结果未确认）")
                 return
             parsed.species = dlg.species
             parsed.strategy = (parsed.strategy or "") + " + 人工核对"
@@ -522,11 +597,13 @@ class MainWindow(QMainWindow):
         self.ui.tabResults.setCurrentIndex(2)
         self._show_report("正在调用 " + self.analyzer.mode_text + " 分析…")
         self.ui.btnAnalyze.setEnabled(False)
+        self.ui.btnAnalyze.setText("分析中…")
+        self._busy.cover()
         self.ui.btnExport.setEnabled(False)
         msg = f"分析中…（阶段一：{metrics.species_count} 个物种逐个评价；阶段二：综合成报告）"
         if last:
             msg += f"｜对比基准：{last.imported_at}"
-        self.ui.labelSummary.setText(msg)
+        self._set_status(msg)
 
         payload = analyzer_mod.build_payload(parsed, metrics, changes, trends, prev_time)
         self._thread = QThread(self)
@@ -558,15 +635,19 @@ class MainWindow(QMainWindow):
         self._refresh_trend()
         self._reload_sessions(select_id=rec_id)
         self.ui.btnAnalyze.setEnabled(True)
+        self.ui.btnAnalyze.setText("分析")
+        self._busy.hide()
 
-        src = next((c["source"] for c in changes_list if c["source"] != "无"), "无对比数据")
+        src = next((c["source"] for c in changes_list if c["source"] != "无"), "—")
         covered = len({e.species for e in analysis.evaluations})
-        tip = (f"完成（{analysis.source}）｜物种 {metrics.species_count} 种｜H'={metrics.shannon_h}"
-               f"｜已评价 {covered}/{metrics.species_count} 种｜变化来源：{src}"
-               f"｜趋势命中 {len(trends_list)} 条")
-        if analysis.error:
-            tip += "　⚠ 调用失败，见详情"
-        self.ui.labelSummary.setText(tip)
+        head = f"完成 · {analysis.source}" + ("　⚠ 调用失败" if analysis.error else "")
+        self._set_status(head, [
+            ("物种", f"{metrics.species_count}"),
+            ("H'", f"{metrics.shannon_h}"),
+            ("评价", f"{covered}/{metrics.species_count}"),
+            ("趋势", f"{len(trends_list)}"),
+            ("对比", src),
+        ])
 
         if analysis.error and SHOW_ERROR_DIALOG:
             QMessageBox.warning(
@@ -600,7 +681,7 @@ class MainWindow(QMainWindow):
         self._refresh_trend()
         last = self.history.last()
         self._reload_sessions(select_id=last.id if last else None)
-        self.ui.labelSummary.setText(
+        self._set_status(
             f"批量导入完成：新增 {saved} 条，跳过 {skipped} 条｜历史库共 {self.history.count()} 条")
         QMessageBox.information(
             self, "导入完成",
@@ -648,4 +729,4 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "导出失败", f"{type(exc).__name__}: {exc}")
             return
         QMessageBox.information(self, "导出成功", f"已保存到：\n{path}")
-        self.ui.labelSummary.setText(f"已导出：{path}")
+        self._set_status(f"已导出：{path}")

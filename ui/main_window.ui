@@ -13,7 +13,7 @@
        <property name="topMargin"><number>9</number></property>
        <property name="rightMargin"><number>20</number></property>
        <property name="bottomMargin"><number>9</number></property>
-       <property name="spacing"><number>10</number></property>
+       <property name="spacing"><number>14</number></property>
        <item>
         <layout class="QVBoxLayout" name="titleBox">
          <property name="spacing"><number>1</number></property>
@@ -44,9 +44,14 @@
        <item><widget class="QLabel" name="labelModeValue">
          <property name="text"><string>-</string></property>
          <property name="styleSheet"><string>color:#1a7f37;font-weight:600;</string></property></widget></item>
-       <item><widget class="QCheckBox" name="chkConfirm">
-         <property name="text"><string>分析前核对解析结果</string></property>
-         <property name="checked"><bool>true</bool></property></widget></item>
+       <item>
+        <widget class="QPushButton" name="btnMore">
+         <property name="minimumSize"><size><width>28</width><height>28</height></size></property>
+         <property name="maximumSize"><size><width>28</width><height>28</height></size></property>
+         <property name="text"><string>≡</string></property>
+         <property name="toolTip"><string>更多设置</string></property>
+        </widget>
+       </item>
       </layout>
      </widget>
     </item>
@@ -70,7 +75,36 @@
         <item><widget class="QLabel" name="labelListTitle">
           <property name="text"><string>会话记录</string></property>
           <property name="styleSheet"><string>color:#666;</string></property></widget></item>
-        <item><widget class="QListWidget" name="sessionList"/></item>
+        <item>
+         <widget class="QStackedWidget" name="listStack">
+          <widget class="QWidget" name="listPage">
+           <layout class="QVBoxLayout" name="listPageLayout">
+            <property name="leftMargin"><number>0</number></property>
+            <property name="topMargin"><number>0</number></property>
+            <property name="rightMargin"><number>0</number></property>
+            <property name="bottomMargin"><number>0</number></property>
+            <item><widget class="QListWidget" name="sessionList"/></item>
+           </layout>
+          </widget>
+          <widget class="QWidget" name="emptyPage">
+           <layout class="QVBoxLayout" name="emptyPageLayout">
+            <item><spacer name="emptyTop">
+              <property name="orientation"><enum>Qt::Orientation::Vertical</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>20</width><height>80</height></size></property></spacer></item>
+            <item><widget class="QLabel" name="labelEmptyList">
+              <property name="text"><string>还没有分析记录
+
+点「＋ 新建分析」开始</string></property>
+              <property name="alignment"><set>Qt::AlignmentFlag::AlignCenter</set></property>
+              <property name="styleSheet"><string>color:#9AA9A1;font-size:11px;line-height:150%;</string></property>
+            </widget></item>
+            <item><spacer name="emptyBottom">
+              <property name="orientation"><enum>Qt::Orientation::Vertical</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>20</width><height>120</height></size></property></spacer></item>
+           </layout>
+          </widget>
+         </widget>
+        </item>
         <item><widget class="QLabel" name="labelCount">
           <property name="text"><string>共 0 条</string></property>
           <property name="styleSheet"><string>color:#888;font-size:11px;</string></property></widget></item>
@@ -158,6 +192,19 @@
     <item>
      <layout class="QHBoxLayout" name="bottomLayout">
       <item><widget class="QLabel" name="labelSummary"><property name="text"><string>就绪</string></property></widget></item>
+      <item>
+       <widget class="QWidget" name="pillBar">
+        <property name="sizePolicy"><sizepolicy hsizetype="Maximum" vsizetype="Preferred">
+         <horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+        <layout class="QHBoxLayout" name="pillLayout">
+         <property name="leftMargin"><number>0</number></property>
+         <property name="topMargin"><number>0</number></property>
+         <property name="rightMargin"><number>0</number></property>
+         <property name="bottomMargin"><number>0</number></property>
+         <property name="spacing"><number>6</number></property>
+        </layout>
+       </widget>
+      </item>
       <item><spacer name="bottomSpacer">
         <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
         <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>

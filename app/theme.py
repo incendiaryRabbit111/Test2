@@ -84,18 +84,18 @@ QPushButton:disabled {{
 }}
 
 /* 主按钮 */
-QPushButton#btnNew, QPushButton#btnAnalyze, QPushButton#btnExport {{
+QPushButton#btnNew, QPushButton#btnAnalyze {{
     background: {PRIMARY};
     color: #FFFFFF;
     border: 1px solid {PRIMARY};
     font-weight: 600;
     padding: 8px 16px;
 }}
-QPushButton#btnNew:hover, QPushButton#btnAnalyze:hover, QPushButton#btnExport:hover {{
+QPushButton#btnNew:hover, QPushButton#btnAnalyze:hover {{
     background: {PRIMARY_HOVER};
     border-color: {PRIMARY_HOVER};
 }}
-QPushButton#btnNew:pressed, QPushButton#btnAnalyze:pressed, QPushButton#btnExport:pressed {{
+QPushButton#btnNew:pressed, QPushButton#btnAnalyze:pressed {{
     background: {PRIMARY_PRESSED};
 }}
 
@@ -113,6 +113,49 @@ QPushButton#btnGuide:hover {{
     background: {PRIMARY_LIGHT};
     color: {PRIMARY};
     border-color: {SOFT_GREEN};
+}}
+
+/* 次要主操作（导出）：绿色描边 */
+QPushButton#btnExport {{
+    background: {CARD};
+    color: {PRIMARY};
+    border: 1px solid {SOFT_GREEN};
+    border-radius: 7px;
+    padding: 7px 16px;
+    font-weight: 600;
+}}
+QPushButton#btnExport:hover {{
+    background: {PRIMARY_LIGHT};
+    border-color: {PRIMARY};
+}}
+QPushButton#btnExport:disabled {{
+    color: #A9B7B0;
+    border-color: {BORDER};
+    background: #F7F9F8;
+}}
+
+/* 顶栏「≡」更多设置 */
+QPushButton#btnMore {{
+    background: transparent;
+    color: {TEXT3};
+    border: 1px solid transparent;
+    border-radius: 7px;
+    font-size: 14px;
+    padding: 0px;
+}}
+QPushButton#btnMore:hover {{
+    background: #F4F8F6;
+    border-color: {BORDER};
+    color: {PRIMARY};
+}}
+
+/* 状态栏胶囊 */
+QLabel#pill {{
+    background: #EAF4EE;
+    color: #4A7A66;
+    border-radius: 9px;
+    padding: 2px 9px;
+    font-size: 10px;
 }}
 
 /* 次级强调（API 设置） */

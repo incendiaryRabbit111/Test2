@@ -130,7 +130,7 @@ def main() -> int:
     win.resize(1280, 800)
     win.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     win.show()
-    win.ui.chkConfirm.setChecked(False)
+    win._confirm_action.setChecked(False)
     pump(app)
 
     # 走一遍完整流程：新建 -> 粘贴 -> 分析

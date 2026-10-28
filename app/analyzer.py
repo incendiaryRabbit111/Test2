@@ -30,7 +30,7 @@ SYSTEM_PROMPT = """你是污水处理厂活性污泥微生物镜检分析专家�
 STAGE1_TEMPLATE = """【本次检测数据】
 浓度单位：{unit}
 物种种类数：{species_count}
-多样性指数 H'：{h}（均匀度 {evenness}）
+Shannon 多样性 H'：{h}｜Pielou 均匀度 J：{evenness}｜Margalef 丰富度 D：{d}
 优势种群（相对丰度≥3%）：{dominant}
 绝对优势种群（相对丰度≥10%）：{absolute}
 
@@ -67,7 +67,7 @@ STAGE1_TEMPLATE = """【本次检测数据】
 # ---------------- 阶段二：综合报告 ----------------
 STAGE2_TEMPLATE = """【本次检测概要】
 物种种类数：{species_count}
-多样性指数 H'：{h}（均匀度 {evenness}）
+Shannon 多样性 H'：{h}｜Pielou 均匀度 J：{evenness}｜Margalef 丰富度 D：{d}
 优势种群：{dominant}
 绝对优势种群：{absolute}
 
@@ -86,6 +86,9 @@ STAGE2_TEMPLATE = """【本次检测概要】
 【任务】
 把这些零散的单物种评价，综合成一份整体判断。
 
+判断群落结构时，请在「情况」里结合 H'、J、D 三个指数说明：
+J 偏低说明群落被少数种垄断，D 偏低说明种类贫乏，二者与 H' 合起来反映系统稳定性。
+
 **最关键的要求**：要主动找出多个物种**共同指向**的问题。
 例如有多条评价都提到"溶解氧偏低""污泥龄偏长""有机负荷偏高"，就把这一点单独提炼出来、
 明确指出它是本次的主要矛盾；不要只是把各物种结论罗列一遍。
@@ -99,7 +102,8 @@ STAGE2_TEMPLATE = """【本次检测概要】
 建议：<一条建议，20~40 字>
 
 （建议 2~4 条，每条单独一行。只依据上面给出的信息，不要编造任何数值。
-  如果某条判断引用了参考资料，在句末标注 [R1] 这样的编号；没有引用就不要标注。）"""
+  如果某条判断引用了参考资料，在句末标注 [R1] 这样的编号；没有引用就不要标注。
+        引用时只写「据《书名》第X页」+ 一句话概括，**不要摘抄原文段落**。）"""
 
 
 @dataclass
@@ -369,6 +373,7 @@ class DeepSeekAnalyzer:
             species_count=payload["species_count"],
             h=payload["h"],
             evenness=payload["evenness"],
+            d=payload.get("d", 0.0),
             dominant="、".join(payload["dominant"]) or "（无）",
             absolute="、".join(payload["absolute"]) or "（无）",
             species_table=cls._species_table(payload),
@@ -415,6 +420,7 @@ class DeepSeekAnalyzer:
             species_count=payload["species_count"],
             h=payload["h"],
             evenness=payload["evenness"],
+            d=payload.get("d", 0.0),
             dominant="、".join(payload["dominant"]) or "（无）",
             absolute="、".join(payload["absolute"]) or "（无）",
             evaluations=text,
@@ -536,7 +542,8 @@ def build_payload(parsed, metrics, changes: dict | None = None,
         "species_count": s,
         "h": metrics.shannon_h,
         "h_max": h_max,
-        "evenness": evenness,
+        "evenness": metrics.pielou_j or evenness,
+        "d": metrics.margalef_d,
         "dominant": metrics.dominant,
         "absolute": metrics.absolute,
         "previous_time": previous_time,

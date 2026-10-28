@@ -35,6 +35,17 @@ copy /y "release\使用说明.txt" "dist\特征微生物分析工具\" >nul
 copy /y "samples\测试数据.txt" "dist\特征微生物分析工具\" >nul
 
 echo.
+echo [3.5/4] 附带知识库索引（只带索引，不带 PDF）
+set "KB=knowledge\index\bm25.pkl"
+if exist "%KB%" (
+    if not exist "dist\特征微生物分析工具\knowledge\index" mkdir "dist\特征微生物分析工具\knowledge\index"
+    copy /y "%KB%" "dist\特征微生物分析工具\knowledge\index\" >nul
+    echo        已附带 bm25.pkl
+) else (
+    echo        [提示] 没找到 knowledge\index\bm25.pkl，本包将不带本地知识库
+)
+
+echo.
 echo [4/4] 压缩成 zip
 if not exist "output" mkdir output
 powershell -NoProfile -Command "Compress-Archive -Path 'dist\特征微生物分析工具\*' -DestinationPath 'output\特征微生物分析工具_Demo.zip' -Force"

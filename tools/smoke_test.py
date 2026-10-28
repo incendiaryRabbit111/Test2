@@ -88,7 +88,11 @@ def test_pipeline():
     check("物种数 = 13", m.species_count == 13, str(m.species_count))
     check("浓度合计 = 3.515", abs(m.total - 3.515) < 1e-9, f"{m.total}")
     check("H' = 2.031", m.shannon_h == 2.031, str(m.shannon_h))
-    check("优势种群 10 个", len(m.dominant) == 10, str(len(m.dominant)))
+    check("优势种群 4 个（Y>0.05）", len(m.dominant) == 4, str(len(m.dominant)))
+    check("优势种名单正确", set(m.dominant) == {"表壳虫", "扭曲管叶虫", "内管虫", "袋鞭虫"},
+          str(m.dominant))
+    check("Margalef 丰富度 D≈0.796", abs(m.margalef_d - 0.796) < 0.005, str(m.margalef_d))
+    check("Pielou 均匀度 J≈0.792", abs(m.pielou_j - 0.792) < 0.005, str(m.pielou_j))
     check("绝对优势种群与仪器一致", set(m.absolute) == {"扭曲管叶虫", "表壳虫"}, str(m.absolute))
     return p, m
 
@@ -478,7 +482,7 @@ def test_gui():
     check("评价表有综合评价", len(win.ui.tblEvaluations.item(0, 4).text()) > 10,
           win.ui.tblEvaluations.item(0, 4).text()[:30])
     check("报告已分段显示", "\n\n" in win.ui.txtReport.toPlainText())
-    check("报告字号已放大", win.ui.txtReport.font().pointSize() == 11)
+    check("报告字号已放大", win.ui.txtReport.font().pointSize() >= 13)
     check("导出按钮已启用", win.ui.btnExport.isEnabled())
     check("趋势图 tab 存在", hasattr(win.ui, "trendHolder"))
     check("趋势图已加载物种按钮", len(win.trend_view._buttons) >= 13,

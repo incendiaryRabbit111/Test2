@@ -91,22 +91,21 @@ def export(path, sample_time: str = "", parsed=None, metrics=None, analysis=None
     # ---- Sheet 2 检测概要 ----
     ws2 = wb.create_sheet("检测概要")
     s = metrics.species_count
-    h_max = round(math.log(s), 3) if s > 1 else 0.0
-    evenness = round(metrics.shannon_h / h_max, 3) if h_max else 0.0
     _write_header(ws2, ["设备编号", "采样时间", "导出时间", "浓度单位", "浓度合计",
-                        "物种种类数", "多样性指数H'", "均匀度", "优势种群", "绝对优势种群",
-                        "对比基准时间", "命中趋势规则"])
+                        "物种种类数", "多样性指数H'", "丰富度指数D", "均匀度J",
+                        "优势种群", "绝对优势种群", "对比基准时间", "命中趋势规则"])
     ws2.append([
         _safe(device or ""), _safe(sample_time or ""),
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        _safe(parsed.unit or ""), round(metrics.total, 4), s, metrics.shannon_h, evenness,
+        _safe(parsed.unit or ""), round(metrics.total, 4), s, metrics.shannon_h,
+        metrics.margalef_d, metrics.pielou_j,
         _safe("、".join(metrics.dominant)), _safe("、".join(metrics.absolute)),
         _safe(previous_time or "（无）"),
         _safe("；".join(f"{t.rule}（{t.detail}）" for t in trends) or "（无）"),
     ])
     for cell in ws2[2]:
         cell.alignment = WRAP
-    _autosize(ws2, caps={9: 40, 10: 24, 12: 40})
+    _autosize(ws2, caps={10: 40, 11: 24, 13: 40})
 
     # ---- Sheet 3 AI 分析报告 ----
     ws3 = wb.create_sheet("AI分析报告")
@@ -123,7 +122,7 @@ def export(path, sample_time: str = "", parsed=None, metrics=None, analysis=None
     references = getattr(analysis, "references", None) or []
     if references:
         ws4 = wb.create_sheet("参考来源")
-        _write_header(ws4, ["编号", "书名", "作者", "页码", "是否引用", "原文摘录"])
+        _write_header(ws4, ["编号", "书名", "作者", "页码", "是否引用"])
         for ref in references:
             start = ref.get("page_start")
             end = ref.get("page_end")
@@ -131,10 +130,10 @@ def export(path, sample_time: str = "", parsed=None, metrics=None, analysis=None
             ws4.append([
                 _safe(ref.get("label", "")), _safe(ref.get("book", "")),
                 _safe(ref.get("author", "")), pages,
-                "是" if ref.get("cited") else "", _safe(ref.get("text", "")),
+                "是" if ref.get("cited") else "",
             ])
-            ws4.cell(row=ws4.max_row, column=6).alignment = WRAP
-        _autosize(ws4, caps={2: 30, 3: 20, 6: 100})
+            pass
+        _autosize(ws4, caps={2: 34, 3: 20})
 
     wb.save(path)
     return path

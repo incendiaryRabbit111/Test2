@@ -136,7 +136,7 @@ class KnowledgeBase:
         return False
 
     @staticmethod
-    def _snippet(text: str, tokens: list[str], radius: int = 180) -> str:
+    def _snippet(text: str, tokens: list[str], radius: int = 70) -> str:
         lowered = text.lower()
         pos = -1
         for tok in tokens:
@@ -187,10 +187,11 @@ def format_context(refs: list[Reference]) -> str:
             if ref.page_start == ref.page_end
             else f"第{ref.page_start}-{ref.page_end}页"
         )
-        lines.append(
-            f"[{ref.label}] 《{ref.book}》{pages}：{ref.text}"
-        )
-    return "\n\n".join(lines)
+        note = " ".join((ref.text or "").split())
+        if len(note) > 110:
+            note = note[:110] + "…"
+        lines.append(f"[{ref.label}] 《{ref.book}》{pages}：{note}")
+    return "\n".join(lines)
 
 
 def mark_cited(refs: list[Reference], *texts: str) -> None:

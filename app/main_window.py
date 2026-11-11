@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -39,7 +41,10 @@ from app import history as history_mod
 from app import metrics as metrics_mod
 from app import parser as parser_mod
 from app import trend as trend_mod
+from app.api_client import ApiClient, ApiError
+from app.api_debug_dialog import ApiDebugDialog
 from app.api_dialog import ApiSettingsDialog
+from app.api_history import ApiHistory
 from app.batch_dialog import BatchDialog
 from app.confirm_dialog import ConfirmDialog
 from app.generated.ui_main_window import Ui_MainWindow
@@ -75,6 +80,23 @@ class AnalyzeWorker(QObject):
         self.finished.emit(self.analyzer.analyze(self.payload))
 
 
+class ApiCallWorker(QThread):
+    """API 模式的网络请求放到子线程。"""
+
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, fn, parent=None) -> None:
+        super().__init__(parent)
+        self.fn = fn
+
+    def run(self) -> None:
+        try:
+            self.done.emit(self.fn())
+        except Exception as exc:  # noqa: BLE001 - 错误交给界面显示
+            self.failed.emit(str(exc))
+
+
 class BusyOverlay(QWidget):
     """分析期间盖在结果区上的半透明遮罩，防止重复点击。"""
 
@@ -108,7 +130,12 @@ class MainWindow(QMainWindow):
         self.api_store = api_config_mod.ApiConfigStore()
         self.api_store.seed_from_env()        # 首次运行把 .env 里的 key 导进配置库
         self.analyzer = analyzer_mod.DeepSeekAnalyzer(self.api_store.default())
+        self.mode = "local"
+        self.api_client: ApiClient | None = None
+        self.api_history: ApiHistory | None = None
         self._pending = None            # 分析中的上下文
+        self._api_pending = None
+        self._api_worker: ApiCallWorker | None = None
         self._change_map: dict = {}
         self._trends: list = []
         self._current = None            # 当前展示的 Record
@@ -124,6 +151,8 @@ class MainWindow(QMainWindow):
         self._setup_tables()
         self._setup_report_view()
         self._setup_trend_view()
+        self._setup_feedback_bar()
+        self._setup_mode_switch()
         self._connect()
         self.ui.mainLayout.setStretchFactor(self.ui.splitter, 1)
         self.ui.leftLayout.setStretchFactor(self.ui.listStack, 1)
@@ -137,6 +166,9 @@ class MainWindow(QMainWindow):
             self._show_input_page("还没有任何记录，粘贴数据后点「分析」")
         else:
             self._set_status(f"已载入 {self.history.count()} 条历史记录")
+
+        if str(self._settings.value("backend_mode", "local")) == "api":
+            self._apply_mode("api", initial=True)
 
     # ---------------- 初始化 ----------------
     def showEvent(self, event) -> None:
@@ -198,6 +230,10 @@ class MainWindow(QMainWindow):
         self._confirm_action.setChecked(True)
         menu = QMenu(self)
         menu.addAction(self._confirm_action)
+        menu.addSeparator()
+        self._api_debug_action = QAction("API 调试台 / 知识库", self)
+        self._api_debug_action.triggered.connect(self.on_api_debug)
+        menu.addAction(self._api_debug_action)
         self.ui.btnMore.setMenu(menu)
         self.ui.btnMore.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -233,6 +269,93 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(self.ui.trendHolder)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.trend_view)
+
+    def _setup_feedback_bar(self) -> None:
+        self.feedback_bar = QWidget(self.ui.resultPage)
+        row = QHBoxLayout(self.feedback_bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.feedback_label = QLabel("这份报告准确吗？")
+        self.feedback_label.setStyleSheet("color:#666;")
+        row.addWidget(self.feedback_label)
+        self.btn_feedback_up = QPushButton("👍 准确")
+        self.btn_feedback_down = QPushButton("👎 不准确")
+        self.btn_feedback_clear = QPushButton("撤回反馈")
+        self.btn_feedback_up.clicked.connect(lambda: self._on_feedback("up"))
+        self.btn_feedback_down.clicked.connect(lambda: self._on_feedback("down"))
+        self.btn_feedback_clear.clicked.connect(self._on_feedback_clear)
+        row.addWidget(self.btn_feedback_up)
+        row.addWidget(self.btn_feedback_down)
+        row.addWidget(self.btn_feedback_clear)
+        row.addStretch(1)
+        self.ui.resultLayout.insertWidget(1, self.feedback_bar)
+        self.feedback_bar.setVisible(False)
+
+    def _setup_mode_switch(self) -> None:
+        self.mode_combo = QComboBox(self.ui.topBar)
+        self.mode_combo.addItem("本地模式", "local")
+        self.mode_combo.addItem("API 模式", "api")
+        self.mode_combo.setToolTip("本地模式使用本机数据库；API 模式使用后端统一历史库")
+        idx = self.ui.topLayout.indexOf(self.ui.labelMode)
+        self.ui.topLayout.insertWidget(max(idx, 0), self.mode_combo)
+        self.mode_combo.blockSignals(True)
+        saved = str(self._settings.value("backend_mode", "local"))
+        self.mode_combo.setCurrentIndex(1 if saved == "api" else 0)
+        self.mode_combo.blockSignals(False)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+
+    def _on_mode_changed(self, *_) -> None:
+        mode = str(self.mode_combo.currentData() or "local")
+        self._apply_mode(mode)
+
+    def _apply_mode(self, mode: str, initial: bool = False) -> None:
+        if mode == "api":
+            settings = QSettings("MicrobeAnalyzer", "ApiDebug")
+            base = str(settings.value("base_url", "http://127.0.0.1:8000")).strip()
+            key = str(settings.value("api_key", "")).strip()
+            client = ApiClient(base, key)
+            provider = ApiHistory(client)
+            try:
+                provider.count()
+            except Exception as exc:  # noqa: BLE001 - 把连接失败交给界面
+                if not initial:
+                    QMessageBox.warning(
+                        self, "API 模式连接失败",
+                        f"无法连接后端：\n{exc}\n\n"
+                        "请确认 start_api.bat 已启动，并在「API 调试台 / 知识库」里保存正确的地址和 Key。",
+                    )
+                self.mode_combo.blockSignals(True)
+                self.mode_combo.setCurrentIndex(0)
+                self.mode_combo.blockSignals(False)
+                self._settings.setValue("backend_mode", "local")
+                if not initial:
+                    self._apply_mode("local")
+                return
+            self.mode = "api"
+            self.api_client = client
+            self.api_history = provider
+            self.history = provider
+            self.ui.comboProvider.setEnabled(False)
+            self.ui.btnApiSettings.setEnabled(False)
+            self.feedback_bar.setVisible(True)
+            self.ui.labelModeValue.setText("● API 模式")
+            self.ui.labelModeValue.setStyleSheet("color:#1a7f37;font-weight:bold;")
+            self._settings.setValue("backend_mode", "api")
+        else:
+            self.mode = "local"
+            self.api_client = None
+            self.api_history = None
+            self.history = history_mod.History()
+            self.ui.comboProvider.setEnabled(True)
+            self.ui.btnApiSettings.setEnabled(True)
+            self.feedback_bar.setVisible(False)
+            self._settings.setValue("backend_mode", "local")
+            self._apply_provider()
+        self._refresh_trend()
+        self._reload_sessions(select_id=None)
+        self._set_status(
+            "API 模式：使用统一历史库" if self.mode == "api"
+            else "本地模式：使用本机历史库"
+        )
 
     def _connect(self) -> None:
         self.ui.btnAnalyze.clicked.connect(self.on_analyze)
@@ -310,6 +433,10 @@ class MainWindow(QMainWindow):
         dlg.exec()
         self._reload_providers()
 
+    def on_api_debug(self) -> None:
+        """打开 HTTP API 调试台（不替代本地分析流程）。"""
+        ApiDebugDialog(self).exec()
+
     def _on_new(self) -> None:
         """新建分析：清空输入框和时间，回到输入页。"""
         self.ui.inputText.clear()
@@ -364,7 +491,11 @@ class MainWindow(QMainWindow):
 
     def _reload_sessions(self, select_id: int | None = None) -> None:
         # 按导入顺序升序：最早导入的是第 1 条
-        recs = list(reversed(self.history.all_desc()))
+        try:
+            recs = list(reversed(self.history.all_desc()))
+        except Exception as exc:  # noqa: BLE001 - API 断线时保留界面
+            self._set_status(f"历史加载失败：{exc}")
+            recs = []
         self.ui.listStack.setCurrentWidget(self.ui.listPage if recs else self.ui.emptyPage)
         self.ui.sessionList.blockSignals(True)
         self.ui.sessionList.clear()
@@ -450,6 +581,59 @@ class MainWindow(QMainWindow):
         self._set_status(f"已删除「{rec.title}」｜历史库还剩 {self.history.count()} 条")
 
     # ---------------- 展示一条记录 ----------------
+    def _on_feedback(self, verdict: str) -> None:
+        if self.mode != "api":
+            return
+        rec = self._current
+        if rec is None or not rec.id or self.api_client is None:
+            return
+        if not rec.report:
+            QMessageBox.information(self, "提示", "这条记录还没有报告，不能反馈。")
+            return
+        try:
+            self.api_client.feedback(rec.id, verdict)
+        except Exception as exc:  # noqa: BLE001 - 反馈失败不阻塞主流程
+            QMessageBox.warning(self, "反馈失败", str(exc))
+            return
+        rec.feedback = verdict
+        self._update_feedback_buttons()
+        self._set_status("已点赞，已加入内部历史案例库" if verdict == "up"
+                         else "已点踩，不会进入历史案例库")
+
+    def _on_feedback_clear(self) -> None:
+        if self.mode != "api" or self._current is None or not self._current.id:
+            return
+        if self.api_client is None:
+            return
+        try:
+            self.api_client.delete_feedback(self._current.id)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "撤回失败", str(exc))
+            return
+        self._current.feedback = ""
+        self._update_feedback_buttons()
+        self._set_status("已撤回反馈，历史记录仍然保留")
+
+    def _update_feedback_buttons(self) -> None:
+        rec = self._current
+        visible = self.mode == "api"
+        self.feedback_bar.setVisible(visible)
+        if not visible:
+            return
+        has_report = bool(rec and rec.report and rec.id)
+        self.btn_feedback_up.setEnabled(has_report)
+        self.btn_feedback_down.setEnabled(has_report)
+        verdict = getattr(rec, "feedback", "") if rec else ""
+        self.btn_feedback_clear.setEnabled(bool(verdict))
+        if verdict == "up":
+            self.feedback_label.setText("已点赞：这份报告会作为内部历史案例")
+        elif verdict == "down":
+            self.feedback_label.setText("已点踩：这份报告不会进入历史案例")
+        elif has_report:
+            self.feedback_label.setText("这份报告准确吗？")
+        else:
+            self.feedback_label.setText("这条记录还没有报告")
+
     def _show_record(self, rec) -> None:
         self._current = rec
         self._change_map = {d.get("species"): d for d in (rec.changes or [])}
@@ -473,6 +657,7 @@ class MainWindow(QMainWindow):
         self._show_report(text, rec.references or [])
         self._show_result_page()
         self.ui.btnExport.setEnabled(bool(rec.species))
+        self._update_feedback_buttons()
 
     def _fill_metrics(self, metrics: metrics_mod.MetricsResult) -> None:
         t = self.ui.tblMetrics
@@ -559,6 +744,9 @@ class MainWindow(QMainWindow):
 
     # ---------------- 分析流程 ----------------
     def on_analyze(self) -> None:
+        if self.mode == "api":
+            self._on_api_analyze()
+            return
         raw = self.ui.inputText.toPlainText()
         parsed = parser_mod.parse(raw)
         if not parsed.species:
@@ -616,6 +804,92 @@ class MainWindow(QMainWindow):
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
 
+    def _on_api_analyze(self) -> None:
+        raw = self.ui.inputText.toPlainText()
+        if not raw.strip():
+            QMessageBox.information(self, "提示", "请先输入固定文本。")
+            return
+        parsed = parser_mod.parse(raw)
+        if not parsed.species:
+            QMessageBox.warning(self, "解析失败", "\n".join(parsed.warnings) or "没有识别到任何物种数据")
+            return
+        if self.api_client is None:
+            QMessageBox.warning(self, "API 模式", "API 客户端未初始化，请重新切换模式。")
+            return
+        sample_time = self.ui.timeInput.text().strip()
+        self._api_pending = (raw, sample_time)
+        self.ui.btnAnalyze.setEnabled(False)
+        self.ui.btnAnalyze.setText("分析中…")
+        self._busy.cover()
+        self.ui.btnExport.setEnabled(False)
+        self._show_report("正在调用 API 分析…")
+        self._set_status("API 分析中…（服务端会使用统一历史库和内部案例）")
+        worker = ApiCallWorker(
+            lambda: self.api_client.evaluate(raw, sample_time=sample_time),
+            self,
+        )
+        self._api_worker = worker
+        worker.done.connect(self._on_api_analysis_done)
+        worker.failed.connect(self._on_api_analysis_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _reset_api_buttons(self) -> None:
+        self.ui.btnAnalyze.setEnabled(True)
+        self.ui.btnAnalyze.setText("分析")
+        self._busy.hide()
+
+    def _on_api_analysis_failed(self, message: str) -> None:
+        self._api_pending = None
+        self._reset_api_buttons()
+        self._set_status(f"API 分析失败：{message}")
+        QMessageBox.warning(self, "API 分析失败", message)
+
+    def _on_api_analysis_done(self, data) -> None:
+        if self._api_pending is None:
+            return
+        raw, sample_time = self._api_pending
+        self._api_pending = None
+        self._reset_api_buttons()
+        if not isinstance(data, dict):
+            self._set_status("API 返回格式不正确")
+            return
+        parsed = parser_mod.parse(raw)
+        metrics = data.get("metrics") or {}
+        meta = data.get("meta") or {}
+        rec_id = int(meta.get("history_id") or 0)
+        warnings = data.get("warnings") or []
+        rec = history_mod.Record(
+            id=rec_id,
+            sample_time=str(data.get("sample_time") or sample_time),
+            unit=parsed.unit,
+            total=float(metrics.get("total") or 0.0),
+            species_count=int(metrics.get("species_count") or 0),
+            shannon_h=float(metrics.get("shannon_h") or 0.0),
+            species=dict(parsed.species),
+            report=str(data.get("report_text") or ""),
+            raw_text=raw,
+            evaluations=list(data.get("evaluations") or []),
+            changes=list(data.get("changes") or []),
+            trends=list(data.get("trends") or []),
+            analysis_source=str(meta.get("analysis_source") or ""),
+            error_text="；".join(str(x) for x in warnings) if data.get("degraded") else "",
+            references=list(data.get("references") or []),
+            metrics=dict(metrics),
+        )
+        self._refresh_trend()
+        self._reload_sessions(select_id=rec_id)
+        self._show_record(rec)
+        self._set_status(
+            f"API 完成 · {rec.analysis_source or '未知来源'}",
+            [
+                ("物种", str(rec.species_count)),
+                ("H'", f"{rec.shannon_h}"),
+                ("评价", f"{len(rec.evaluations)}/{rec.species_count}"),
+                ("趋势", f"{len(rec.trends)}"),
+            ],
+        )
+
     def _on_analysis_done(self, analysis) -> None:
         if self._pending is None:
             return
@@ -658,10 +932,20 @@ class MainWindow(QMainWindow):
             )
 
     def _refresh_trend(self) -> None:
-        self.trend_view.load(self.history.recent(limit=500))
+        try:
+            self.trend_view.load(self.history.recent(limit=500))
+        except Exception as exc:  # noqa: BLE001 - 趋势加载失败不应影响主界面
+            self._set_status(f"趋势加载失败：{exc}")
 
     # ---------------- 批量导入 ----------------
     def on_batch_import(self) -> None:
+        if self.mode == "api":
+            QMessageBox.information(
+                self, "API 模式",
+                "API 模式下的批量导入还没有接到桌面界面。\n\n"
+                "请先切回本地模式使用批量导入，或使用 /docs 调用 /api/v1/batch/import。",
+            )
+            return
         dlg = BatchDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return

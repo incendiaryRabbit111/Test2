@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ============================================
-echo   特征微生物分析工具 - 打包脚本
+echo   特征微生物分析工具 - 打包（纯程序）
 echo ============================================
 
 if not exist ".venv\Scripts\python.exe" (
@@ -30,16 +30,10 @@ echo [2/4] 打包 exe（约 1 分钟）
 if errorlevel 1 goto :err
 
 echo.
-echo [3/4] 附带说明与测试数据
-copy /y "release\使用说明.txt" "dist\特征微生物分析工具\" >nul
-copy /y "samples\测试数据.txt" "dist\特征微生物分析工具\" >nul
-
-echo.
-echo [3.5/4] 附带知识库索引（只带索引，不带 PDF）
-set "KB=knowledge\index\bm25.pkl"
-if exist "%KB%" (
+echo [3/4] 附带知识库索引（只带 pkl，不带 PDF / 说明文档）
+if exist "knowledge\index\bm25.pkl" (
     if not exist "dist\特征微生物分析工具\knowledge\index" mkdir "dist\特征微生物分析工具\knowledge\index"
-    copy /y "%KB%" "dist\特征微生物分析工具\knowledge\index\" >nul
+    copy /y "knowledge\index\bm25.pkl" "dist\特征微生物分析工具\knowledge\index\" >nul
     echo        已附带 bm25.pkl
 ) else (
     echo        [提示] 没找到 knowledge\index\bm25.pkl，本包将不带本地知识库
@@ -48,12 +42,13 @@ if exist "%KB%" (
 echo.
 echo [4/4] 压缩成 zip
 if not exist "output" mkdir output
+if exist "output\特征微生物分析工具_Demo.zip" del /q "output\特征微生物分析工具_Demo.zip"
 powershell -NoProfile -Command "Compress-Archive -Path 'dist\特征微生物分析工具\*' -DestinationPath 'output\特征微生物分析工具_Demo.zip' -Force"
 if errorlevel 1 goto :err
 
 echo.
 echo ============================================
-echo   完成！
+echo   完成（纯程序，不含说明/测试数据）
 echo   exe 目录: dist\特征微生物分析工具\
 echo   发布包  : output\特征微生物分析工具_Demo.zip
 echo ============================================

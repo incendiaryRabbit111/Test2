@@ -37,6 +37,9 @@ Shannon 多样性 H'：{h}｜Pielou 均匀度 J：{evenness}｜Margalef 丰富�
 各物种浓度与相对丰度（按浓度降序，共 {species_count} 种）：
 {species_table}
 
+【历史序列上下文（可能为空，只用于判断趋势，不代表本次数值）】
+{history_context}
+
 【参考资料（来自专业书籍与文献，可能相关）】
 {reference_block}
 
@@ -60,6 +63,7 @@ Shannon 多样性 H'：{h}｜Pielou 均匀度 J：{evenness}｜Margalef 丰富�
 2. 依据该物种真实的指示意义作答，把握不大就用"常见于…""通常与…相关"这类保守表述，不要编造；
 3. 如果某物种的「较上次变化」幅度显著（绝对值 ≥ 30%），或是本次新检出 / 本次消失，
    要在评价里点出这个变化及其含义；没有变化数据时不必强行提及；
+   如果提供了历史序列上下文，可补充该物种在批次中的持续趋势，但不要把历史当成本次实测值；
 4. 如果使用了参考资料中的具体结论，在 comment 末尾用 [R1] 这样的编号标注来源；
    没有使用就不要标注。只能引用上面列出的编号，不要编造资料中没有的内容；
 5. 只输出 JSON，不要用 markdown 代码块包裹，不要有任何其它文字。"""
@@ -77,6 +81,9 @@ Shannon 多样性 H'：{h}｜Pielou 均匀度 J：{evenness}｜Margalef 丰富�
 【命中的趋势规则】
 {trends}
 
+【历史序列上下文（可能为空，只用于判断趋势，不代表本次数值）】
+{history_context}
+
 【上一步生成的逐物种评价】
 {evaluations}
 
@@ -92,6 +99,9 @@ J 偏低说明群落被少数种垄断，D 偏低说明种类贫乏，二者与 
 **最关键的要求**：要主动找出多个物种**共同指向**的问题。
 例如有多条评价都提到"溶解氧偏低""污泥龄偏长""有机负荷偏高"，就把这一点单独提炼出来、
 明确指出它是本次的主要矛盾；不要只是把各物种结论罗列一遍。
+
+如果提供了历史序列上下文：请用历史判断“持续恶化、单次波动还是正在恢复”，
+不要把它当成多次独立报告来逐条复述；历史数据不足、时间间隔不均或缺少采样时间时要明确说明。
 
 【输出格式】严格按下面两段式，每一条各占一行，不要用 markdown 符号、不要加编号或小标题：
 
@@ -377,6 +387,7 @@ class DeepSeekAnalyzer:
             dominant="、".join(payload["dominant"]) or "（无）",
             absolute="、".join(payload["absolute"]) or "（无）",
             species_table=cls._species_table(payload),
+            history_context=payload.get("history_context") or "（无）",
             reference_block=reference_block or "（无）",
         )
 
@@ -423,6 +434,7 @@ class DeepSeekAnalyzer:
             d=payload.get("d", 0.0),
             dominant="、".join(payload["dominant"]) or "（无）",
             absolute="、".join(payload["absolute"]) or "（无）",
+            history_context=payload.get("history_context") or "（无）",
             evaluations=text,
             reference_block=reference_block or "（无）",
         )
@@ -521,7 +533,8 @@ class DeepSeekAnalyzer:
 
 
 def build_payload(parsed, metrics, changes: dict | None = None,
-                  trends: list | None = None, previous_time: str = "") -> dict:
+                  trends: list | None = None, previous_time: str = "",
+                  history_context: str = "") -> dict:
     import math
     s = metrics.species_count
     h_max = round(math.log(s), 3) if s > 1 else 0.0
@@ -547,6 +560,7 @@ def build_payload(parsed, metrics, changes: dict | None = None,
         "dominant": metrics.dominant,
         "absolute": metrics.absolute,
         "previous_time": previous_time,
+        "history_context": history_context,
         "rows": rows,
         "changes": [
             {"species": c.species, "pct": c.pct, "source": c.source}

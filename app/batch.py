@@ -23,6 +23,7 @@ _SEG_SPLIT = re.compile(
     r"|\n\s*(?:-{3,}|={3,}|#{3,}|\*{3,}|~{3,})\s*\n"
     r"|\n\s*(?:-{3,}|={3,}|#{3,}|\*{3,}|~{3,})\s*$"
 )
+_SEPARATOR = re.compile(r"^(?:-{3,}|—{3,}|={3,}|#{3,}|\*{3,}|~{3,})$")
 
 
 @dataclass
@@ -46,10 +47,36 @@ class BatchResult:
 
 
 def split_segments(raw: str) -> list[str]:
+    """按空行/独占一行的分隔符切段。
+
+    逐行处理，避免「空行 + ---」把 --- 留在下一段开头，
+    也避免连续空行产生幽灵段。
+    """
     if not raw or not raw.strip():
         return []
-    parts = _SEG_SPLIT.split(raw)
-    return [p.strip() for p in parts if p and p.strip()]
+    text = raw.replace("\r\n", "\n").replace("\r", "\n")
+    segments: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if not buf:
+            return
+        part = "\n".join(buf).strip()
+        if part:
+            segments.append(part)
+        buf.clear()
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            flush()
+            continue
+        if _SEPARATOR.fullmatch(stripped):
+            flush()
+            continue
+        buf.append(line)
+    flush()
+    return segments
 
 
 def parse_batch(raw: str, start_time: str = "", interval_min: int = 0) -> BatchResult:
@@ -63,6 +90,7 @@ def parse_batch(raw: str, start_time: str = "", interval_min: int = 0) -> BatchR
     if start_time and base is None:
         result.warnings.append(f"起始时间「{start_time}」无法识别，将不使用推算时间")
 
+    valid_index = 0
     for i, seg in enumerate(segments):
         item = BatchItem(index=i + 1, text=seg)
 
@@ -75,17 +103,23 @@ def parse_batch(raw: str, start_time: str = "", interval_min: int = 0) -> BatchR
                 item.time_source = "段内自带"
                 item.text = "\n".join(lines[1:]).strip()
 
-        # 2) 推算
+        # 2) 推算；无效段不占用时间序号
         if not item.sample_time and base is not None and interval_min > 0:
-            item.sample_time = fmt(base + timedelta(minutes=interval_min * i))
+            item.sample_time = fmt(
+                base + timedelta(minutes=interval_min * valid_index)
+            )
             item.time_source = "按起始时间+间隔推算"
 
         item.parsed = parser_mod.parse(item.text)
         if not item.parsed.species:
             item.warning = "未识别到物种数据"
             result.warnings.append(f"第 {i + 1} 段没解析出物种，已跳过")
-        elif item.parsed.warnings:
-            item.warning = "；".join(item.parsed.warnings)
+        else:
+            valid_index += 1
+            if item.parsed.warnings:
+                item.warning = "；".join(item.parsed.warnings)
+            if not item.time_source:
+                item.time_source = "无"
 
         result.items.append(item)
 

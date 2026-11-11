@@ -5,9 +5,11 @@ build/
 dist/
 *.spec
 .env
-app/generated/
+app/generated/*
+!app/generated/ui_main_window.py
 data/*.xls
 data/*.db
+data/api/
 output/
 *.xlsx 
 *.log 
